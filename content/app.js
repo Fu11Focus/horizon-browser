@@ -3,6 +3,11 @@
 //   JS -> C++:  window.saucer.exposed.mb_*(...)
 //   C++ -> JS:  window.mb* functions below, invoked via webview.execute()
 (function () {
+  // macOS keeps the traffic-light controls in our top row — reserve space for them.
+  if (/Mac/i.test(navigator.platform || navigator.userAgent)) {
+    document.documentElement.classList.add("mac");
+  }
+
   const tabs = new Map();      // id -> { url, title }
   let activeId = null;
   let editing = false;         // user is typing in the address bar
@@ -14,9 +19,17 @@
     if (e && typeof e[name] === "function") return e[name](...args);
   };
 
+  function dragRegion(cls) {
+    const d = document.createElement("div");
+    d.className = cls;
+    d.setAttribute("data-webview-drag", "");
+    return d;
+  }
+
   function renderTabs() {
     const strip = el("tabs");
     strip.innerHTML = "";
+    strip.appendChild(dragRegion("drag-left")); // room for macOS traffic lights
     for (const [id, info] of tabs) {
       const t = document.createElement("div");
       t.className = "tab" + (id === activeId ? " active" : "");
@@ -43,6 +56,7 @@
       t.appendChild(close);
       strip.appendChild(t);
     }
+    strip.appendChild(dragRegion("drag-fill")); // draggable empty space on the right
   }
 
   // ---- called from C++ ----

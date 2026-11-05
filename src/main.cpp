@@ -15,10 +15,17 @@
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
 
+#ifdef __APPLE__
+namespace mb
+{
+    void configure_titlebar(saucer::window *); // src/titlebar_mac.mm
+}
+#endif
+
 namespace
 {
     // Height of the chrome strip (tab row + toolbar). Must match content/style.css.
-    constexpr int kChromeHeight = 76;
+    constexpr int kChromeHeight = 80;
 
     // Injected into every webview (shell + each tab). Captures browser keyboard
     // shortcuts and forwards them to the C++ core. saucer exposes no window-level
@@ -342,6 +349,12 @@ coco::stray start(saucer::application *app)
 
     browser.window->set_title("minibrowser");
     browser.window->set_size({.w = browser.width, .h = browser.height});
+
+    // Chrome/Brave-style top row: hide the title bar but keep the window
+    // controls. Draggable regions are marked `data-webview-drag` in the shell.
+#ifdef __APPLE__
+    mb::configure_titlebar(browser.window.get());
+#endif
 
     browser.shell =
         std::make_unique<saucer::smartview>(saucer::smartview::create({.window = browser.window}).value());

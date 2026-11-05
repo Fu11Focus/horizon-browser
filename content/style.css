@@ -33,25 +33,29 @@ html, body {
   -webkit-user-select: none;
 }
 
-/* ---- tab strip ---- */
+/* ---- tab strip (top row, shares the title-bar space) ---- */
 #tabs {
   display: flex;
   align-items: flex-end;
-  height: 34px;
-  padding: 4px 6px 0 6px;
+  height: 38px;
+  padding: 8px 6px 0 6px;
   gap: 4px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  overflow: hidden;
 }
-#tabs::-webkit-scrollbar { display: none; }
+
+/* Draggable empty regions (move the window). The left one reserves space for
+   the macOS traffic lights (only shown on macOS via the .mac class). */
+.drag-left { flex: 0 0 0; height: 30px; }
+.mac .drag-left { flex: 0 0 72px; }
+.drag-fill { flex: 1 1 0; min-width: 40px; height: 30px; }
 
 .tab {
   display: flex;
   align-items: center;
   gap: 6px;
   /* Chrome-like: every tab shares the width equally (flex-basis 0, grow 1) and
-     shrinks as more tabs open, down to a minimum, then the strip scrolls. */
+     shrinks as more tabs open, down to a minimum; leftover space goes to the
+     draggable fill region on the right. */
   flex: 1 1 0;
   min-width: 44px;
   max-width: 220px;

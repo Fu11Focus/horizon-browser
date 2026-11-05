@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # WKWebView `inspectable` requires macOS 13.3+. Keep a modern deployment target.
 if (APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "13.3" CACHE STRING "Minimum macOS deployment version")
+    enable_language(OBJCXX) # for src/titlebar_mac.mm
 endif ()
 
 include(cmake/CPM.cmake)
@@ -21,6 +22,11 @@ CPMFindPackage(
 add_executable(minibrowser MACOSX_BUNDLE
     src/main.cpp
 )
+
+if (APPLE)
+    target_sources(minibrowser PRIVATE src/titlebar_mac.mm)
+    target_link_libraries(minibrowser PRIVATE "-framework Cocoa" "-framework WebKit")
+endif ()
 
 # Embed the chrome UI (content/) directly into the binary — single contained
 # executable, served at runtime via saucer's embedded scheme.
