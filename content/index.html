@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+  <title>minibrowser</title>
+</head>
+<body>
+  <div id="tabs"></div>
+  <div id="toolbar">
+    <button id="back"    class="nav" title="Back">‹</button>
+    <button id="fwd"     class="nav" title="Forward">›</button>
+    <button id="reload"  class="nav" title="Reload">⟳</button>
+    <input  id="addr"    type="text" spellcheck="false" autocomplete="off"
+            placeholder="Search or enter address">
+    <button id="newtab"  class="nav" title="New tab (⌘T)">+</button>
+    <button id="devtools" class="nav" title="DevTools (⌘⌥I)">&#8942;</button>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
