@@ -38,6 +38,7 @@ namespace mb
     void configure_titlebar(saucer::window *); // src/platform_mac.mm
     void focus_webview(saucer::webview *);      // src/platform_mac.mm
     void wipe_webview_data(saucer::webview *);  // src/platform_mac.mm
+    void wake_and_quit(saucer::application *);   // src/platform_mac.mm
     bool keychain_store(const std::string &service, const std::string &account, const std::string &data);
     std::optional<std::string> keychain_load(const std::string &service, const std::string &account);
 }
@@ -958,7 +959,11 @@ namespace
                         std::erase_if(g_browsers, [&](const std::unique_ptr<Browser> &p) { return p.get() == b; });
                         if (g_browsers.empty())
                         {
+#ifdef __APPLE__
+                            mb::wake_and_quit(app); // [NSApp stop:] alone won't wake an idle loop
+#else
                             app->quit();
+#endif
                         }
                     });
             });

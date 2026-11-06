@@ -3,6 +3,7 @@
 // (traffic lights) kept visible. saucer's decoration::partial would hide those
 // buttons, so we configure the NSWindow directly via the stable native handle.
 
+#include <saucer/app.hpp>
 #include <saucer/window.hpp>
 #include <saucer/modules/stable/webkit.hpp>
 
@@ -119,6 +120,29 @@ namespace mb
                 return;
             }
             [wv.window makeFirstResponder:wv];
+        }
+    }
+
+    // Quit the app loop. saucer's quit() is just `[NSApp stop:]`, which only
+    // takes effect after the next event is processed — when the last window
+    // closes there is no such event, so the app hangs idle. Post a dummy event
+    // to wake the loop so `-[NSApplication run]` actually returns.
+    void wake_and_quit(saucer::application *app)
+    {
+        @autoreleasepool
+        {
+            NSApplication *ns = app->native<true>().application;
+            [ns stop:nil];
+            NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                                location:NSZeroPoint
+                                           modifierFlags:0
+                                               timestamp:0
+                                            windowNumber:0
+                                                 context:nil
+                                                 subtype:0
+                                                   data1:0
+                                                   data2:0];
+            [ns postEvent:event atStart:YES];
         }
     }
 
