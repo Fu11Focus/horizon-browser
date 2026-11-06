@@ -152,6 +152,7 @@
       if (v) { call("mb_new_profile", v); call("mb_toggle_profiles"); }
     };
     el("profile-create").onclick = createProfile;
+    el("profile-window").onclick = () => { call("mb_new_window"); call("mb_toggle_profiles"); };
     el("profile-name").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); createProfile(); }
       if (e.key === "Escape") { e.preventDefault(); call("mb_toggle_profiles"); }

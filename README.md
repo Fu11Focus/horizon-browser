@@ -77,9 +77,11 @@ self-contained — no external asset files at runtime.
 On a login-form submit the browser offers to save the credential; secrets are
 stored in the **macOS keychain** (never written to disk or logs), namespaced per
 profile. On revisiting the same origin the saved username/password are
-autofilled. "Never" remembers origins to skip (per profile). The keychain
-backend is macOS-only for now; Windows (Credential Manager) and Linux
-(libsecret) are TODO — on those platforms saving is in-memory only.
+autofilled, and focusing a login field shows a pick-to-fill suggestion. "Never"
+remembers origins to skip (per profile). Keychain access is marshalled to the
+main thread (saucer runs exposed calls on a worker). The keychain backend is
+macOS-only for now; Windows (Credential Manager) and Linux (libsecret) are TODO
+— on those platforms saving is in-memory only.
 
 ## Profiles
 
@@ -87,8 +89,9 @@ Each profile is an isolated browsing context (cookies, storage, sessions) kept
 in its own directory under the app-data folder
 (`~/Library/Application Support/minibrowser/profiles/<name>/` on macOS). One
 window runs one profile; the profiles panel (profile button in the toolbar)
-lists profiles, switches to one (opens its window), and creates new ones. The
-last-used profile is reopened on launch.
+lists profiles, switches to one (opens its window), creates new ones, and can
+open another window of the current profile (also ⌘N). The last-used profile is
+reopened on launch.
 
 ## Keyboard shortcuts
 
@@ -102,6 +105,7 @@ last-used profile is reopened on launch.
 | ⌘1 … ⌘8             | Switch to tab 1 … 8    |
 | ⌘9                  | Switch to the last tab |
 | ⌘F / Ctrl+F         | Find on page           |
+| ⌘N / Ctrl+N         | New window, same profile |
 | ⌘⌥I / Ctrl+Alt+I    | Toggle DevTools        |
 
 Shortcuts are captured inside each webview (saucer exposes no window-level key

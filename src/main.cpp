@@ -234,6 +234,7 @@ namespace
           case "BracketLeft":  e.preventDefault(); return send("back");
           case "BracketRight": e.preventDefault(); return send("forward");
           case "KeyF": e.preventDefault(); return send("find");
+          case "KeyN": e.preventDefault(); return send("new_window");
         }
         if (c && c.indexOf("Digit") === 0) {
           var n = parseInt(c.slice(5), 10);
@@ -341,13 +342,24 @@ namespace
     })();
     )js";
 
-    // Injected into each content tab. Captures credentials on login-form submit
-    // and autofills saved ones on load. Runs in the top frame only. The password
-    // only ever crosses the bridge as a function argument (never logged).
+    // Injected into each content tab. Captures credentials on login-form submit,
+    // shows a pick-to-fill suggestion when a login field is focused, and autofills
+    // a single saved credential on load. Top frame only; the password only ever
+    // crosses the bridge as a function argument (never logged).
     constexpr std::string_view kPasswordScript = R"js(
     (function () {
       if (window.__mbPw) return;
       window.__mbPw = true;
+
+      var cred = null, fetched = false;
+      function getCred(cb) {
+        if (fetched) { cb(cred); return; }
+        try {
+          window.saucer.exposed.mb_get_credentials(location.origin).then(function (c) {
+            fetched = true; cred = (c && c.found && c.password) ? c : null; cb(cred);
+          }, function () { fetched = true; cb(null); });
+        } catch (e) { fetched = true; cb(null); }
+      }
 
       function userField(form, pw) {
         var inputs = form.querySelectorAll("input"), cand = null;
@@ -360,6 +372,69 @@ namespace
         return cand;
       }
 
+      function fill(anchor) {
+        if (!cred) return;
+        var form = anchor.form;
+        var pw = form ? form.querySelector('input[type="password"]') : document.querySelector('input[type="password"]');
+        if (!pw) return;
+        pw.value = cred.password;
+        var uf = form ? userField(form, pw) : null;
+        if (uf && cred.username) uf.value = cred.username;
+        [pw, uf].forEach(function (el) {
+          if (!el) return;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        hide();
+      }
+
+      // ---- pick-to-fill suggestion dropdown (Shadow DOM, inline styles for CSP) ----
+      var host = null;
+      function hide() { if (host) { host.remove(); host = null; } }
+      function css(el, o) { for (var k in o) el.style[k] = o[k]; }
+      function show(anchor) {
+        hide();
+        if (!cred) return;
+        var r = anchor.getBoundingClientRect();
+        host = document.createElement("div");
+        css(host, { position: "fixed", left: r.left + "px", top: (r.bottom + 2) + "px",
+                    width: Math.max(r.width, 240) + "px", zIndex: "2147483647" });
+        var sh = host.attachShadow({ mode: "open" });
+        var box = document.createElement("div");
+        css(box, { font: "13px -apple-system, system-ui, sans-serif", background: "#ffffff", color: "#111",
+                   border: "1px solid #cfcfcf", borderRadius: "8px", boxShadow: "0 6px 20px rgba(0,0,0,.18)",
+                   overflow: "hidden" });
+        var row = document.createElement("div");
+        css(row, { display: "flex", flexDirection: "column", gap: "2px", padding: "8px 12px", cursor: "default" });
+        var u = document.createElement("div"); u.textContent = cred.username || "Saved password";
+        css(u, { fontWeight: "600" });
+        var p = document.createElement("div"); p.textContent = "••••••••";
+        css(p, { color: "#888", letterSpacing: "2px" });
+        row.appendChild(u); row.appendChild(p);
+        row.addEventListener("mouseenter", function () { row.style.background = "#eef3ff"; });
+        row.addEventListener("mouseleave", function () { row.style.background = "transparent"; });
+        row.addEventListener("mousedown", function (e) { e.preventDefault(); fill(anchor); });
+        box.appendChild(row); sh.appendChild(box);
+        (document.body || document.documentElement).appendChild(host);
+      }
+
+      function relevant(input) {
+        if (!input || input.tagName !== "INPUT") return false;
+        if ((input.type || "").toLowerCase() === "password") return true;
+        return input.form && input.form.querySelector('input[type="password"]');
+      }
+
+      document.addEventListener("focusin", function (e) {
+        if (relevant(e.target)) getCred(function (c) { if (c) show(e.target); });
+      }, true);
+      document.addEventListener("mousedown", function (e) {
+        if (host && e.target !== host && !host.contains(e.target)) hide();
+      }, true);
+      window.addEventListener("scroll", hide, true);
+      window.addEventListener("resize", hide, true);
+      document.addEventListener("keydown", function (e) { if (e.key === "Escape") hide(); }, true);
+
+      // capture credentials on submit
       document.addEventListener("submit", function (e) {
         try {
           var form = e.target;
@@ -371,21 +446,13 @@ namespace
         } catch (err) {}
       }, true);
 
-      async function autofill() {
-        try {
-          var cred = await window.saucer.exposed.mb_get_credentials(location.origin);
-          if (!cred || !cred.found || !cred.password) return;
+      // autofill a single saved credential on load
+      function autofill() {
+        getCred(function (c) {
+          if (!c) return;
           var pw = document.querySelector('input[type="password"]');
-          if (!pw) return;
-          pw.value = cred.password;
-          var uf = pw.form ? userField(pw.form, pw) : null;
-          if (uf && !uf.value && cred.username) uf.value = cred.username;
-          [pw, uf].forEach(function (el) {
-            if (!el) return;
-            el.dispatchEvent(new Event("input", { bubbles: true }));
-            el.dispatchEvent(new Event("change", { bubbles: true }));
-          });
-        } catch (e) {}
+          if (pw && !pw.value) fill(pw);
+        });
       }
       if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", autofill);
       else autofill();
@@ -448,6 +515,9 @@ namespace
         int id;
         std::unique_ptr<saucer::smartview> view;
     };
+
+    struct Browser;
+    Browser *open_window(saucer::application *app, std::string profile); // defined below
 
     struct Browser
     {
@@ -797,6 +867,7 @@ namespace
             else if (k == "forward")     forward();
             else if (k == "devtools")    toggle_devtools();
             else if (k == "find")        open_find();
+            else if (k == "new_window")  open_window(app, profile);
             else if (k == "focus_addr")  { if (shell) { focus_webview(shell.get()); shell->execute("window.mbFocusAddr && window.mbFocusAddr()"); } }
             else if (k.rfind("tab:", 0) == 0) switch_to_index(std::atoi(k.c_str() + 4));
         }
@@ -864,6 +935,7 @@ namespace
         b->shell->expose("mb_profiles", [] { return list_profiles(); });
         b->shell->expose("mb_current_profile", [b] { return b->profile; });
         b->shell->expose("mb_toggle_profiles", [b] { b->toggle_profiles(); });
+        b->shell->expose("mb_new_window", [app, b] { open_window(app, b->profile); });
 
         // Bridge: saved passwords.
         b->shell->expose("mb_save_password", [b] { b->save_password(); });

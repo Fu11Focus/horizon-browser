@@ -18,47 +18,70 @@ namespace mb
         return [NSString stringWithUTF8String:s.c_str()];
     }
 
+    // Run a block on the main thread. The legacy file keychain is tied to the
+    // thread's session, and saucer runs exposed functions on a worker thread, so
+    // keychain access from there fails unless hopped to the main thread.
+    static void run_on_main(void (^work)(void))
+    {
+        if ([NSThread isMainThread])
+        {
+            work();
+        }
+        else
+        {
+            dispatch_sync(dispatch_get_main_queue(), work);
+        }
+    }
+
     // Store a secret in the login keychain (generic password), replacing any
     // existing item for (service, account). The app only ever reads back items
     // it created, so no access prompt on read.
     bool keychain_store(const std::string &service, const std::string &account, const std::string &data)
     {
-        @autoreleasepool
-        {
-            NSDictionary *query = @{
-                (id)kSecClass : (id)kSecClassGenericPassword,
-                (id)kSecAttrService : nsstr(service),
-                (id)kSecAttrAccount : nsstr(account),
-            };
-            SecItemDelete((__bridge CFDictionaryRef)query);
+        __block bool ok = false;
+        run_on_main(^{
+          @autoreleasepool
+          {
+              NSDictionary *query = @{
+                  (id)kSecClass : (id)kSecClassGenericPassword,
+                  (id)kSecAttrService : nsstr(service),
+                  (id)kSecAttrAccount : nsstr(account),
+              };
+              SecItemDelete((__bridge CFDictionaryRef)query);
 
-            NSMutableDictionary *add = [query mutableCopy];
-            add[(id)kSecValueData]   = [nsstr(data) dataUsingEncoding:NSUTF8StringEncoding];
+              NSMutableDictionary *add = [query mutableCopy];
+              add[(id)kSecValueData]   = [nsstr(data) dataUsingEncoding:NSUTF8StringEncoding];
 
-            return SecItemAdd((__bridge CFDictionaryRef)add, nullptr) == errSecSuccess;
-        }
+              ok = SecItemAdd((__bridge CFDictionaryRef)add, nullptr) == errSecSuccess;
+          }
+        });
+        return ok;
     }
 
     std::optional<std::string> keychain_load(const std::string &service, const std::string &account)
     {
-        @autoreleasepool
-        {
-            NSDictionary *query = @{
-                (id)kSecClass : (id)kSecClassGenericPassword,
-                (id)kSecAttrService : nsstr(service),
-                (id)kSecAttrAccount : nsstr(account),
-                (id)kSecReturnData : @YES,
-                (id)kSecMatchLimit : (id)kSecMatchLimitOne,
-            };
-            CFTypeRef out      = nullptr;
-            const OSStatus rc  = SecItemCopyMatching((__bridge CFDictionaryRef)query, &out);
-            if (rc != errSecSuccess || !out)
-            {
-                return std::nullopt;
-            }
-            NSData *data = (__bridge_transfer NSData *)out;
-            return std::string(static_cast<const char *>(data.bytes), data.length);
-        }
+        __block std::optional<std::string> result;
+        run_on_main(^{
+          @autoreleasepool
+          {
+              NSDictionary *query = @{
+                  (id)kSecClass : (id)kSecClassGenericPassword,
+                  (id)kSecAttrService : nsstr(service),
+                  (id)kSecAttrAccount : nsstr(account),
+                  (id)kSecReturnData : @YES,
+                  (id)kSecMatchLimit : (id)kSecMatchLimitOne,
+              };
+              CFTypeRef out     = nullptr;
+              const OSStatus rc = SecItemCopyMatching((__bridge CFDictionaryRef)query, &out);
+              if (rc == errSecSuccess && out)
+              {
+                  NSData *data = (__bridge NSData *)out;
+                  result       = std::string(static_cast<const char *>(data.bytes), data.length);
+                  CFRelease(out); // SecItemCopyMatching returns a +1 reference (no ARC here)
+              }
+          }
+        });
+        return result;
     }
 
     void configure_titlebar(saucer::window *window)
