@@ -20,6 +20,37 @@
     if (e && typeof e[name] === "function") return e[name](...args);
   };
 
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function icon(d, cls) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("class", "ico " + (cls || ""));
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  // Stable per-profile colour for its avatar (white text stays readable on each).
+  const AVATAR_COLORS = ["#3d6bff", "#1f8a5f", "#b5561f", "#8a4fd6", "#c23d6b", "#0f7d8c"];
+  function avatar(name) {
+    const a = document.createElement("span");
+    a.className = "avatar";
+    let h = 0;
+    for (const ch of name) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    a.style.setProperty("--avatar", AVATAR_COLORS[h % AVATAR_COLORS.length]);
+    a.textContent = name ? name[0].toUpperCase() : "?";
+    return a;
+  }
+
+  // Lock icon for https pages, search icon otherwise / while typing.
+  function updateAddrIcon() {
+    const info = tabs.get(activeId);
+    const secure = !editing && !!info && /^https:/i.test(info.url || "");
+    el("addr-wrap").classList.toggle("secure", secure);
+  }
+
   function dragRegion(cls) {
     const d = document.createElement("div");
     d.className = cls;
@@ -40,8 +71,10 @@
         const fav = document.createElement("img");
         fav.className = "favicon";
         fav.src = info.favicon;
-        fav.onerror = () => fav.remove();
+        fav.onerror = () => fav.replaceWith(blankFavicon());
         t.appendChild(fav);
+      } else {
+        t.appendChild(blankFavicon());
       }
 
       const label = document.createElement("span");
@@ -50,14 +83,29 @@
 
       const close = document.createElement("span");
       close.className = "close";
-      close.textContent = "×";
+      close.title = "Close tab";
+      close.appendChild(icon("M6 6l12 12M18 6L6 18", "xs"));
       close.onclick = (e) => { e.stopPropagation(); call("mb_close_tab", id); };
 
       t.appendChild(label);
       t.appendChild(close);
       strip.appendChild(t);
     }
+    const add = document.createElement("button");
+    add.id = "newtab";
+    add.className = "nav";
+    add.title = "New tab (⌘T)";
+    add.setAttribute("aria-label", "New tab");
+    add.appendChild(icon("M12 5v14M5 12h14", "sm"));
+    add.onclick = () => call("mb_new_tab");
+    strip.appendChild(add);
     strip.appendChild(dragRegion("drag-fill")); // draggable empty space on the right
+  }
+
+  function blankFavicon() {
+    const b = document.createElement("span");
+    b.className = "favicon blank";
+    return b;
   }
 
   // ---- called from C++ ----
@@ -70,6 +118,7 @@
     activeId = id;
     const info = tabs.get(id);
     if (info && !editing) el("addr").value = info.url || "";
+    updateAddrIcon();
     renderTabs();
   };
   window.mbUpdateTab = (id, info) => {
@@ -81,6 +130,7 @@
     if (id === activeId && info.url !== undefined && !editing) {
       el("addr").value = info.url;
     }
+    if (id === activeId) updateAddrIcon();
     renderTabs();
   };
 
@@ -88,6 +138,7 @@
   window.mbFocusAddr = () => {
     const a = el("addr");
     editing = true;
+    updateAddrIcon();
     a.focus();
     a.select();
   };
@@ -102,12 +153,12 @@
   };
   window.mbCloseFind = () => {
     el("find").hidden = true;
-    el("find-input").classList.remove("nomatch");
+    el("find-box").classList.remove("nomatch");
   };
   window.mbFindResult = (current, total) => {
     el("find-count").textContent = current + "/" + total;
     const q = el("find-input");
-    q.classList.toggle("nomatch", !!q.value && total === 0);
+    el("find-box").classList.toggle("nomatch", !!q.value && total === 0);
   };
 
   // ---- profiles ----
@@ -119,7 +170,8 @@
     for (const name of list) {
       const c = document.createElement("div");
       c.className = "chip" + (name === currentProfile ? " current" : "");
-      c.textContent = name;
+      c.appendChild(avatar(name));
+      c.appendChild(document.createTextNode(name));
       if (name !== currentProfile) c.onclick = () => { call("mb_switch_profile", name); call("mb_toggle_profiles"); };
       chips.appendChild(c);
     }
@@ -129,8 +181,10 @@
 
   // ---- save-password banner ----
   window.mbOfferPassword = (origin, user) => {
-    el("password-text").textContent =
-      "Save password" + (user ? " for " + user : "") + " on " + origin + "?";
+    const text = el("password-text");
+    const site = document.createElement("b");
+    site.textContent = origin;
+    text.replaceChildren("Save password" + (user ? " for " + user : "") + " on ", site, "?");
     el("password").hidden = false;
   };
   window.mbClosePassword = () => { el("password").hidden = true; };
@@ -139,7 +193,6 @@
     el("back").onclick = () => call("mb_back");
     el("fwd").onclick = () => call("mb_forward");
     el("reload").onclick = () => call("mb_reload");
-    el("newtab").onclick = () => call("mb_new_tab");
     el("devtools").onclick = () => call("mb_toggle_devtools");
     el("profile").onclick = () => call("mb_toggle_profiles");
 
@@ -160,8 +213,8 @@
     });
 
     const addr = el("addr");
-    addr.addEventListener("focus", () => { editing = true; addr.select(); });
-    addr.addEventListener("blur", () => { editing = false; });
+    addr.addEventListener("focus", () => { editing = true; updateAddrIcon(); addr.select(); });
+    addr.addEventListener("blur", () => { editing = false; updateAddrIcon(); });
     addr.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { editing = false; addr.blur(); call("mb_navigate", addr.value); }
       if (e.key === "Escape") {
@@ -190,10 +243,13 @@
     const btn = el("profile");
     if (incognito) {
       document.documentElement.classList.add("incognito");
-      btn.textContent = "🕶";
-      btn.title = "Incognito window";
+      const pill = document.createElement("span");
+      pill.className = "avatar";
+      pill.append(icon("M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6zM4 4l16 16", "xs"), "Private");
+      btn.replaceChildren(pill);
+      btn.title = "Private window";
     } else {
-      btn.textContent = currentProfile ? currentProfile[0].toUpperCase() : "●";
+      btn.replaceChildren(avatar(currentProfile));
       btn.title = "Profile: " + (currentProfile || "?");
     }
   }

@@ -41,6 +41,7 @@ content/            # chrome UI (embedded into the binary at build time)
   index.html
   style.css
   app.js
+assets/             # app icon: icon.svg artwork, make_icons.py → .icns / .ico / .png
 ```
 
 ## Build & run (macOS)

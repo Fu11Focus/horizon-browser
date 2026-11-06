@@ -225,17 +225,17 @@ namespace
     }
 
     // Height of the chrome strip (tab row + toolbar). Must match content/style.css.
-    constexpr int kChromeHeight = 80;
+    constexpr int kChromeHeight = 84;
 
     // Extra height of the find bar when in-page search is open. Must match #find
     // in content/style.css.
     constexpr int kFindHeight = 40;
 
     // Extra height of the profiles panel when open. Must match #profiles in CSS.
-    constexpr int kProfilesHeight = 46;
+    constexpr int kProfilesHeight = 48;
 
     // Extra height of the save-password banner when shown. Must match #password.
-    constexpr int kPasswordHeight = 44;
+    constexpr int kPasswordHeight = 48;
 
     // Injected into every webview (shell + each tab). Captures browser keyboard
     // shortcuts and forwards them to the C++ core. saucer exposes no window-level
@@ -929,6 +929,14 @@ namespace
 
         b->window->set_title("minibrowser — " + b->profile);
         b->window->set_size({.w = b->width, .h = b->height});
+
+#ifndef __APPLE__
+        // Windows/Linux: the window icon comes from the embedded PNG (macOS uses the bundle's icon.icns).
+        if (auto icon = saucer::icon::from(saucer::embedded::all().at("/icon.png").content); icon)
+        {
+            b->window->set_icon(*icon);
+        }
+#endif
 
         // Chrome/Brave-style top row: hide the title bar but keep the window
         // controls. Draggable regions are marked `data-webview-drag` in the shell.
