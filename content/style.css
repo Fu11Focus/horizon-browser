@@ -214,6 +214,12 @@ button.nav:active { background: rgba(128,128,128,.30); }
 /* current-profile dot on the toolbar button */
 #profile { font-size: 11px; font-weight: 700; }
 
+/* incognito indicator: dark accent on the chrome + a purple toolbar edge */
+.incognito #tabs,
+.incognito #toolbar { background: #2a2140; }
+.incognito #toolbar { border-bottom-color: #4a3b70; }
+.incognito #profile { font-size: 13px; }
+
 /* ---- save-password banner ---- */
 #password {
   display: flex;

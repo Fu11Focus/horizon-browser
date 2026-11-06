@@ -153,6 +153,7 @@
     };
     el("profile-create").onclick = createProfile;
     el("profile-window").onclick = () => { call("mb_new_window"); call("mb_toggle_profiles"); };
+    el("profile-incognito").onclick = () => { call("mb_new_incognito"); call("mb_toggle_profiles"); };
     el("profile-name").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); createProfile(); }
       if (e.key === "Escape") { e.preventDefault(); call("mb_toggle_profiles"); }
@@ -184,9 +185,17 @@
 
   async function initProfile() {
     try { currentProfile = (await call("mb_current_profile")) || ""; } catch (e) {}
+    let incognito = false;
+    try { incognito = !!(await call("mb_is_incognito")); } catch (e) {}
     const btn = el("profile");
-    btn.textContent = currentProfile ? currentProfile[0].toUpperCase() : "●";
-    btn.title = "Profile: " + (currentProfile || "?");
+    if (incognito) {
+      document.documentElement.classList.add("incognito");
+      btn.textContent = "🕶";
+      btn.title = "Incognito window";
+    } else {
+      btn.textContent = currentProfile ? currentProfile[0].toUpperCase() : "●";
+      btn.title = "Profile: " + (currentProfile || "?");
+    }
   }
 
   function init() {

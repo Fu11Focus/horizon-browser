@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,6 +37,7 @@ namespace mb
 {
     void configure_titlebar(saucer::window *); // src/platform_mac.mm
     void focus_webview(saucer::webview *);      // src/platform_mac.mm
+    void wipe_webview_data(saucer::webview *);  // src/platform_mac.mm
     bool keychain_store(const std::string &service, const std::string &account, const std::string &data);
     std::optional<std::string> keychain_load(const std::string &service, const std::string &account);
 }
@@ -197,6 +200,29 @@ namespace
 #endif
     }
 
+    void wipe_webview_data([[maybe_unused]] saucer::webview *view)
+    {
+#ifdef __APPLE__
+        mb::wipe_webview_data(view);
+#endif
+    }
+
+    // Unique, per-window storage label for an incognito window. Saucer hashes the
+    // storage_path string into a data-store UUID, so a distinct label gives an
+    // isolated session; a random component avoids colliding with a prior session.
+    std::string make_incognito_label()
+    {
+        std::random_device rd;
+        std::string label = "incognito-";
+        for (int i = 0; i < 4; ++i)
+        {
+            char buf[9];
+            std::snprintf(buf, sizeof(buf), "%08x", rd());
+            label += buf;
+        }
+        return label;
+    }
+
     // Height of the chrome strip (tab row + toolbar). Must match content/style.css.
     constexpr int kChromeHeight = 80;
 
@@ -234,7 +260,7 @@ namespace
           case "BracketLeft":  e.preventDefault(); return send("back");
           case "BracketRight": e.preventDefault(); return send("forward");
           case "KeyF": e.preventDefault(); return send("find");
-          case "KeyN": e.preventDefault(); return send("new_window");
+          case "KeyN": e.preventDefault(); return send(e.shiftKey ? "new_incognito" : "new_window");
         }
         if (c && c.indexOf("Digit") === 0) {
           var n = parseInt(c.slice(5), 10);
@@ -517,14 +543,16 @@ namespace
     };
 
     struct Browser;
-    Browser *open_window(saucer::application *app, std::string profile); // defined below
+    Browser *open_window(saucer::application *app, std::string profile, bool incognito = false); // defined below
 
     struct Browser
     {
         saucer::application *app{};
         std::shared_ptr<saucer::window> window;
         std::unique_ptr<saucer::smartview> shell;
-        std::string profile = "Default"; // isolated storage context for this window
+        std::string profile       = "Default"; // isolated storage context for this window
+        std::string session_label = "";        // storage_path string for this window's tabs
+        bool incognito            = false;      // ephemeral session, no password vault
 
         std::vector<Tab> tabs;
         int active     = -1;
@@ -595,7 +623,10 @@ namespace
             Tab tab;
             tab.id   = next_id++;
             tab.view = std::make_unique<saucer::smartview>(
-                saucer::smartview::create({.window = window, .storage_path = profile_dir(profile)}).value());
+                saucer::smartview::create({.window            = window,
+                                           .persistent_cookies = !incognito,
+                                           .storage_path       = fs::path{session_label}})
+                    .value());
 
             const int id = tab.id;
             auto *view   = tab.view.get();
@@ -737,7 +768,7 @@ namespace
 
         void offer_credentials(std::string origin, std::string username, std::string password)
         {
-            if (origin.empty() || is_never(profile, origin))
+            if (incognito || origin.empty() || is_never(profile, origin))
             {
                 return;
             }
@@ -794,6 +825,10 @@ namespace
         Credential get_credentials(const std::string &origin)
         {
             Credential c;
+            if (incognito)
+            {
+                return c; // incognito never autofills from a profile's vault
+            }
             if (auto blob = secret_load(pw_service(), origin))
             {
                 const auto nl = blob->find('\n');
@@ -868,6 +903,7 @@ namespace
             else if (k == "devtools")    toggle_devtools();
             else if (k == "find")        open_find();
             else if (k == "new_window")  open_window(app, profile);
+            else if (k == "new_incognito") open_window(app, profile, true);
             else if (k == "focus_addr")  { if (shell) { focus_webview(shell.get()); shell->execute("window.mbFocusAddr && window.mbFocusAddr()"); } }
             else if (k.rfind("tab:", 0) == 0) switch_to_index(std::atoi(k.c_str() + 4));
         }
@@ -877,16 +913,20 @@ namespace
     // the lifetime of their window; a window's `closed` event removes its entry.
     std::vector<std::unique_ptr<Browser>> g_browsers;
 
-    Browser *open_window(saucer::application *app, std::string profile)
+    Browser *open_window(saucer::application *app, std::string profile, bool incognito)
     {
         auto owned = std::make_unique<Browser>();
         auto *b    = owned.get();
 
-        b->app     = app;
-        b->profile = profile;
-        b->window  = saucer::window::create(app).value();
+        b->app       = app;
+        b->incognito = incognito;
+        b->profile   = incognito ? "Incognito" : profile;
+        // Each window's tabs share one storage label; incognito uses a unique
+        // ephemeral one (isolated session), profiles use their on-disk dir.
+        b->session_label = incognito ? make_incognito_label() : profile_dir(profile).string();
+        b->window        = saucer::window::create(app).value();
 
-        b->window->set_title("minibrowser — " + profile);
+        b->window->set_title("minibrowser — " + b->profile);
         b->window->set_size({.w = b->width, .h = b->height});
 
         // Chrome/Brave-style top row: hide the title bar but keep the window
@@ -905,6 +945,13 @@ namespace
         b->window->on<saucer::window::event::closed>(
             [app, b]
             {
+                if (b->incognito)
+                {
+                    for (auto &t : b->tabs) // make the ephemeral session leave nothing behind
+                    {
+                        wipe_webview_data(t.view.get());
+                    }
+                }
                 app->post(
                     [app, b]
                     {
@@ -935,7 +982,9 @@ namespace
         b->shell->expose("mb_profiles", [] { return list_profiles(); });
         b->shell->expose("mb_current_profile", [b] { return b->profile; });
         b->shell->expose("mb_toggle_profiles", [b] { b->toggle_profiles(); });
-        b->shell->expose("mb_new_window", [app, b] { open_window(app, b->profile); });
+        b->shell->expose("mb_new_window", [app, b] { open_window(app, b->profile, b->incognito); });
+        b->shell->expose("mb_new_incognito", [app, b] { open_window(app, b->profile, true); });
+        b->shell->expose("mb_is_incognito", [b] { return b->incognito; });
 
         // Bridge: saved passwords.
         b->shell->expose("mb_save_password", [b] { b->save_password(); });
@@ -966,7 +1015,10 @@ namespace
         b->layout();
         b->window->show();
 
-        set_last_profile(profile);
+        if (!incognito)
+        {
+            set_last_profile(profile);
+        }
 
         g_browsers.push_back(std::move(owned));
         return b;

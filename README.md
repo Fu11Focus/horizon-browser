@@ -70,6 +70,7 @@ self-contained — no external asset files at runtime.
 - [x] In-page search (⌘F): highlight, match counter, next/prev
 - [x] Profiles: isolated storage per profile, one window per profile
 - [x] Saved passwords: capture on login, store in the OS keychain, autofill
+- [x] Incognito windows: ephemeral isolated sessions, wiped on close
 - [ ] Windows / Linux build verification
 
 ## Saved passwords
@@ -93,6 +94,16 @@ lists profiles, switches to one (opens its window), creates new ones, and can
 open another window of the current profile (also ⌘N). The last-used profile is
 reopened on launch.
 
+## Incognito windows
+
+An incognito window (⇧⌘N, or the "🕶 Incognito" button in the panel) runs an
+**ephemeral, isolated session**: its own storage label (a per-window
+`storage_path` → a separate `WKWebsiteDataStore`), no password saving or autofill
+from any profile vault, and all site data wiped when the window closes. Each
+incognito window is a **separate** session, so you can be logged into the same
+site under different accounts in several incognito windows (and a profile window)
+at once. For sessions that should persist, use profiles instead.
+
 ## Keyboard shortcuts
 
 | Shortcut            | Action                 |
@@ -106,6 +117,7 @@ reopened on launch.
 | ⌘9                  | Switch to the last tab |
 | ⌘F / Ctrl+F         | Find on page           |
 | ⌘N / Ctrl+N         | New window, same profile |
+| ⇧⌘N / Ctrl+Shift+N  | New incognito window   |
 | ⌘⌥I / Ctrl+Alt+I    | Toggle DevTools        |
 
 Shortcuts are captured inside each webview (saucer exposes no window-level key

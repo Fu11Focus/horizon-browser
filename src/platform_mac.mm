@@ -121,4 +121,22 @@ namespace mb
             [wv.window makeFirstResponder:wv];
         }
     }
+
+    // Wipe all website data (cookies, storage, caches) of a webview's data store.
+    // Used to make incognito windows ephemeral: called for each tab on close.
+    void wipe_webview_data(saucer::webview *view)
+    {
+        @autoreleasepool
+        {
+            WKWebView *wv = view->native<true>().webview;
+            if (!wv)
+            {
+                return;
+            }
+            WKWebsiteDataStore *store = wv.configuration.websiteDataStore;
+            NSSet *types              = [WKWebsiteDataStore allWebsiteDataTypes];
+            [store removeDataOfTypes:types modifiedSince:[NSDate distantPast] completionHandler:^{
+            }];
+        }
+    }
 } // namespace mb
