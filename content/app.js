@@ -114,6 +114,9 @@
   }
 
   // ---- drag to reorder tabs (within this window) ----
+  // Listeners live on document (capture phase), not the tab, so the drag keeps
+  // tracking even after the pointer leaves the tab — no reliance on pointer
+  // capture, which doesn't behave consistently in the webview.
   function beginDrag(startEvent, t) {
     if (startEvent.button !== 0 || startEvent.target.closest(".close")) return;
     const strip = el("tabs");
@@ -127,6 +130,7 @@
         dragging = true;
         t.classList.add("dragging");
       }
+      e.preventDefault();
       const after = [...strip.querySelectorAll(".tab")]
         .filter((x) => x !== t)
         .find((s) => {
@@ -135,10 +139,9 @@
         });
       strip.insertBefore(t, after || el("newtab")); // keep within the tab run
     }
-    function onUp(e) {
-      t.removeEventListener("pointermove", onMove);
-      t.removeEventListener("pointerup", onUp);
-      try { t.releasePointerCapture(e.pointerId); } catch (_) {}
+    function onUp() {
+      document.removeEventListener("pointermove", onMove, true);
+      document.removeEventListener("pointerup", onUp, true);
       if (started) {
         t.classList.remove("dragging");
         dragging = false;
@@ -147,9 +150,8 @@
         setTimeout(() => { suppressClick = false; }, 0);
       }
     }
-    try { t.setPointerCapture(startEvent.pointerId); } catch (_) {}
-    t.addEventListener("pointermove", onMove);
-    t.addEventListener("pointerup", onUp);
+    document.addEventListener("pointermove", onMove, true);
+    document.addEventListener("pointerup", onUp, true);
   }
 
   function commitOrder() {
