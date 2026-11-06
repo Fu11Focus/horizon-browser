@@ -69,7 +69,17 @@ self-contained — no external asset files at runtime.
 - [x] Brave-style top row: tabs beside the native window controls
 - [x] In-page search (⌘F): highlight, match counter, next/prev
 - [x] Profiles: isolated storage per profile, one window per profile
+- [x] Saved passwords: capture on login, store in the OS keychain, autofill
 - [ ] Windows / Linux build verification
+
+## Saved passwords
+
+On a login-form submit the browser offers to save the credential; secrets are
+stored in the **macOS keychain** (never written to disk or logs), namespaced per
+profile. On revisiting the same origin the saved username/password are
+autofilled. "Never" remembers origins to skip (per profile). The keychain
+backend is macOS-only for now; Windows (Credential Manager) and Linux
+(libsecret) are TODO — on those platforms saving is in-memory only.
 
 ## Profiles
 

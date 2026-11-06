@@ -213,3 +213,33 @@ button.nav:active { background: rgba(128,128,128,.30); }
 
 /* current-profile dot on the toolbar button */
 #profile { font-size: 11px; font-weight: 700; }
+
+/* ---- save-password banner ---- */
+#password {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+#password[hidden] { display: none; }
+#password-text { flex: 1 1 auto; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn, .btn-primary {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: default;
+}
+.btn:hover { background: rgba(128,128,128,.18); }
+.btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}

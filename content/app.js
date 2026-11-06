@@ -127,6 +127,14 @@
   window.mbOpenProfiles = () => { el("profiles").hidden = false; buildChips(); };
   window.mbCloseProfiles = () => { el("profiles").hidden = true; el("profile-name").value = ""; };
 
+  // ---- save-password banner ----
+  window.mbOfferPassword = (origin, user) => {
+    el("password-text").textContent =
+      "Save password" + (user ? " for " + user : "") + " on " + origin + "?";
+    el("password").hidden = false;
+  };
+  window.mbClosePassword = () => { el("password").hidden = true; };
+
   function wire() {
     el("back").onclick = () => call("mb_back");
     el("fwd").onclick = () => call("mb_forward");
@@ -134,6 +142,10 @@
     el("newtab").onclick = () => call("mb_new_tab");
     el("devtools").onclick = () => call("mb_toggle_devtools");
     el("profile").onclick = () => call("mb_toggle_profiles");
+
+    el("password-save").onclick = () => call("mb_save_password");
+    el("password-never").onclick = () => call("mb_never_password");
+    el("password-dismiss").onclick = () => call("mb_dismiss_password");
 
     const createProfile = () => {
       const v = el("profile-name").value.trim();

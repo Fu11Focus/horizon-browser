@@ -25,7 +25,7 @@ add_executable(minibrowser MACOSX_BUNDLE
 
 if (APPLE)
     target_sources(minibrowser PRIVATE src/platform_mac.mm)
-    target_link_libraries(minibrowser PRIVATE "-framework Cocoa" "-framework WebKit")
+    target_link_libraries(minibrowser PRIVATE "-framework Cocoa" "-framework WebKit" "-framework Security")
 endif ()
 
 # Embed the chrome UI (content/) directly into the binary — single contained

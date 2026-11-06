@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -18,11 +19,24 @@
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
 
+#include <optional>
+
+// Returned across the JS bridge (serialized by glaze), so it must have external
+// linkage — keep it out of the anonymous namespace.
+struct Credential
+{
+    std::string username;
+    std::string password;
+    bool found = false;
+};
+
 #ifdef __APPLE__
 namespace mb
 {
     void configure_titlebar(saucer::window *); // src/platform_mac.mm
-    void focus_webview(saucer::webview *);     // src/platform_mac.mm
+    void focus_webview(saucer::webview *);      // src/platform_mac.mm
+    bool keychain_store(const std::string &service, const std::string &account, const std::string &data);
+    std::optional<std::string> keychain_load(const std::string &service, const std::string &account);
 }
 #endif
 
@@ -118,6 +132,64 @@ namespace
         f << name;
     }
 
+    // ---- saved passwords: secrets go to the OS keychain, never to disk/logs ----
+
+    struct PendingCred
+    {
+        std::string origin;
+        std::string username;
+        std::string password;
+    };
+
+    bool secret_store(const std::string &service, const std::string &account, const std::string &data)
+    {
+#ifdef __APPLE__
+        return mb::keychain_store(service, account, data);
+#else
+        // Non-macOS: in-memory only for now (not persisted). A libsecret /
+        // Credential Manager backend is TODO for the Windows/Linux port.
+        static std::map<std::string, std::string> mem;
+        mem[service + "\x1f" + account] = data;
+        return true;
+#endif
+    }
+
+    std::optional<std::string> secret_load(const std::string &service, const std::string &account)
+    {
+#ifdef __APPLE__
+        return mb::keychain_load(service, account);
+#else
+        static std::map<std::string, std::string> &mem = *new std::map<std::string, std::string>();
+        auto it = mem.find(service + "\x1f" + account);
+        return it == mem.end() ? std::nullopt : std::optional<std::string>{it->second};
+#endif
+    }
+
+    // Origins the user chose never to save, one per line under the profile dir.
+    bool is_never(const std::string &profile, const std::string &origin)
+    {
+        std::ifstream f(profile_dir(profile) / "never_passwords.txt");
+        std::string line;
+        while (std::getline(f, line))
+        {
+            if (line == origin)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void add_never(const std::string &profile, const std::string &origin)
+    {
+        if (is_never(profile, origin))
+        {
+            return;
+        }
+        std::ofstream f(profile_dir(profile) / "never_passwords.txt", std::ios::app);
+        f << origin << "\n";
+    }
+
     void focus_webview([[maybe_unused]] saucer::webview *view)
     {
 #ifdef __APPLE__
@@ -134,6 +206,9 @@ namespace
 
     // Extra height of the profiles panel when open. Must match #profiles in CSS.
     constexpr int kProfilesHeight = 46;
+
+    // Extra height of the save-password banner when shown. Must match #password.
+    constexpr int kPasswordHeight = 44;
 
     // Injected into every webview (shell + each tab). Captures browser keyboard
     // shortcuts and forwards them to the C++ core. saucer exposes no window-level
@@ -266,6 +341,57 @@ namespace
     })();
     )js";
 
+    // Injected into each content tab. Captures credentials on login-form submit
+    // and autofills saved ones on load. Runs in the top frame only. The password
+    // only ever crosses the bridge as a function argument (never logged).
+    constexpr std::string_view kPasswordScript = R"js(
+    (function () {
+      if (window.__mbPw) return;
+      window.__mbPw = true;
+
+      function userField(form, pw) {
+        var inputs = form.querySelectorAll("input"), cand = null;
+        for (var i = 0; i < inputs.length; i++) {
+          var el = inputs[i];
+          if (el === pw) break;
+          var t = (el.type || "").toLowerCase();
+          if (t === "text" || t === "email" || t === "tel" || t === "" || el.autocomplete === "username") cand = el;
+        }
+        return cand;
+      }
+
+      document.addEventListener("submit", function (e) {
+        try {
+          var form = e.target;
+          if (!form || form.nodeName !== "FORM") return;
+          var pw = form.querySelector('input[type="password"]');
+          if (!pw || !pw.value) return;
+          var uf = userField(form, pw);
+          window.saucer.exposed.mb_offer_credentials(location.origin, uf ? uf.value : "", pw.value);
+        } catch (err) {}
+      }, true);
+
+      async function autofill() {
+        try {
+          var cred = await window.saucer.exposed.mb_get_credentials(location.origin);
+          if (!cred || !cred.found || !cred.password) return;
+          var pw = document.querySelector('input[type="password"]');
+          if (!pw) return;
+          pw.value = cred.password;
+          var uf = pw.form ? userField(pw.form, pw) : null;
+          if (uf && !uf.value && cred.username) uf.value = cred.username;
+          [pw, uf].forEach(function (el) {
+            if (!el) return;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+        } catch (e) {}
+      }
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", autofill);
+      else autofill();
+    })();
+    )js";
+
     std::string trim(std::string_view s)
     {
         const auto b = s.find_first_not_of(" \t\r\n");
@@ -337,6 +463,7 @@ namespace
         int height         = 800;
         bool find_open     = false; // in-page search bar visible (adds kFindHeight to chrome)
         bool profiles_open = false; // profiles panel visible (adds kProfilesHeight)
+        bool password_open = false; // save-password banner visible (adds kPasswordHeight)
 
         Tab *find(int id)
         {
@@ -372,8 +499,8 @@ namespace
                 height        = sz.h;
             }
 
-            const int chrome =
-                kChromeHeight + (find_open ? kFindHeight : 0) + (profiles_open ? kProfilesHeight : 0);
+            const int chrome = kChromeHeight + (find_open ? kFindHeight : 0) +
+                               (profiles_open ? kProfilesHeight : 0) + (password_open ? kPasswordHeight : 0);
 
             if (shell)
             {
@@ -415,6 +542,12 @@ namespace
                          [this](int current, int total)
                          { shell->execute("window.mbFindResult({}, {})", current, total); });
             view->inject({.code = std::string{kFindScript}, .run_at = saucer::script::time::creation});
+
+            view->expose("mb_offer_credentials",
+                         [this](std::string origin, std::string user, std::string pass)
+                         { offer_credentials(std::move(origin), std::move(user), std::move(pass)); });
+            view->expose("mb_get_credentials", [this](std::string origin) { return get_credentials(origin); });
+            view->inject({.code = std::string{kPasswordScript}, .run_at = saucer::script::time::creation});
 
             view->on<saucer::webview::event::title>(
                 [this, id](std::string_view title)
@@ -525,6 +658,81 @@ namespace
         void find_prev() { if (auto *t = find(active)) t->view->execute("window.__mbFind && window.__mbFind.prev()"); }
 
         // ---- profiles panel ----
+
+        // ---- saved passwords ----
+
+        std::optional<PendingCred> pending; // credential awaiting a save decision
+
+        std::string pw_service() const { return "minibrowser:" + profile; }
+
+        void offer_credentials(std::string origin, std::string username, std::string password)
+        {
+            if (origin.empty() || is_never(profile, origin))
+            {
+                return;
+            }
+            // Don't nag if the exact same credential is already stored.
+            if (auto existing = secret_load(pw_service(), origin))
+            {
+                const auto nl = existing->find('\n');
+                const std::string u = nl == std::string::npos ? std::string{} : existing->substr(0, nl);
+                const std::string p = nl == std::string::npos ? *existing : existing->substr(nl + 1);
+                if (u == username && p == password)
+                {
+                    return;
+                }
+            }
+            pending       = PendingCred{std::move(origin), std::move(username), std::move(password)};
+            password_open = true;
+            layout();
+            shell->execute("window.mbOfferPassword({}, {})", pending->origin, pending->username);
+        }
+
+        void close_password()
+        {
+            password_open = false;
+            layout();
+            shell->execute("window.mbClosePassword()");
+        }
+
+        void save_password()
+        {
+            if (pending)
+            {
+                secret_store(pw_service(), pending->origin, pending->username + "\n" + pending->password);
+                pending.reset();
+            }
+            close_password();
+        }
+
+        void never_password()
+        {
+            if (pending)
+            {
+                add_never(profile, pending->origin);
+                pending.reset();
+            }
+            close_password();
+        }
+
+        void dismiss_password()
+        {
+            pending.reset();
+            close_password();
+        }
+
+        Credential get_credentials(const std::string &origin)
+        {
+            Credential c;
+            if (auto blob = secret_load(pw_service(), origin))
+            {
+                const auto nl = blob->find('\n');
+                c.username    = nl == std::string::npos ? std::string{} : blob->substr(0, nl);
+                c.password    = nl == std::string::npos ? *blob : blob->substr(nl + 1);
+                c.found       = true;
+            }
+            return c;
+        }
 
         void toggle_profiles()
         {
@@ -656,6 +864,11 @@ namespace
         b->shell->expose("mb_profiles", [] { return list_profiles(); });
         b->shell->expose("mb_current_profile", [b] { return b->profile; });
         b->shell->expose("mb_toggle_profiles", [b] { b->toggle_profiles(); });
+
+        // Bridge: saved passwords.
+        b->shell->expose("mb_save_password", [b] { b->save_password(); });
+        b->shell->expose("mb_never_password", [b] { b->never_password(); });
+        b->shell->expose("mb_dismiss_password", [b] { b->dismiss_password(); });
         b->shell->expose("mb_switch_profile",
                          [app](std::string name)
                          {
