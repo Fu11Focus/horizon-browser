@@ -12,6 +12,8 @@
   let activeId = null;
   let editing = false;         // user is typing in the address bar
   let currentProfile = "";
+  let dragging = false;        // a tab is being dragged to reorder
+  let suppressClick = false;   // swallow the click that ends a drag
 
   const el = (id) => document.getElementById(id);
   const exposed = () => window.saucer && window.saucer.exposed;
@@ -59,13 +61,16 @@
   }
 
   function renderTabs() {
+    if (dragging) return; // don't rebuild the strip mid-drag (it would reset the order)
     const strip = el("tabs");
     strip.innerHTML = "";
     strip.appendChild(dragRegion("drag-left")); // room for macOS traffic lights
     for (const [id, info] of tabs) {
       const t = document.createElement("div");
       t.className = "tab" + (id === activeId ? " active" : "");
-      t.onclick = () => call("mb_switch_tab", id);
+      t.dataset.id = id;
+      t.onclick = () => { if (!suppressClick) call("mb_switch_tab", id); };
+      t.addEventListener("pointerdown", (e) => beginDrag(e, t));
 
       if (info.favicon) {
         const fav = document.createElement("img");
@@ -106,6 +111,54 @@
     const b = document.createElement("span");
     b.className = "favicon blank";
     return b;
+  }
+
+  // ---- drag to reorder tabs (within this window) ----
+  function beginDrag(startEvent, t) {
+    if (startEvent.button !== 0 || startEvent.target.closest(".close")) return;
+    const strip = el("tabs");
+    const startX = startEvent.clientX;
+    let started = false;
+
+    function onMove(e) {
+      if (!started) {
+        if (Math.abs(e.clientX - startX) < 5) return; // threshold: distinguish from a click
+        started = true;
+        dragging = true;
+        t.classList.add("dragging");
+      }
+      const after = [...strip.querySelectorAll(".tab")]
+        .filter((x) => x !== t)
+        .find((s) => {
+          const r = s.getBoundingClientRect();
+          return e.clientX < r.left + r.width / 2;
+        });
+      strip.insertBefore(t, after || el("newtab")); // keep within the tab run
+    }
+    function onUp(e) {
+      t.removeEventListener("pointermove", onMove);
+      t.removeEventListener("pointerup", onUp);
+      try { t.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (started) {
+        t.classList.remove("dragging");
+        dragging = false;
+        commitOrder();
+        suppressClick = true;                       // swallow the trailing click
+        setTimeout(() => { suppressClick = false; }, 0);
+      }
+    }
+    try { t.setPointerCapture(startEvent.pointerId); } catch (_) {}
+    t.addEventListener("pointermove", onMove);
+    t.addEventListener("pointerup", onUp);
+  }
+
+  function commitOrder() {
+    const ids = [...el("tabs").querySelectorAll(".tab")].map((x) => +x.dataset.id);
+    const next = new Map();
+    ids.forEach((i) => { if (tabs.has(i)) next.set(i, tabs.get(i)); });
+    tabs.clear();
+    next.forEach((v, k) => tabs.set(k, v));
+    call("mb_reorder_tabs", ids);
   }
 
   // ---- called from C++ ----

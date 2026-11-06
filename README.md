@@ -88,8 +88,8 @@ assets/             # app icon: icon.svg + make_icons.py → .icns / .ico / .png
 ## Features
 
 - **Tabs** — Chrome-style equal-width tabs beside the native window controls;
-  create / close / switch with per-tab state; new tabs open blank with the
-  address bar focused.
+  create / close / switch with per-tab state, drag to reorder; new tabs open
+  blank with the address bar focused.
 - **Navigation** — smart address bar (URL / bare host → https / else search),
   back / forward / reload, favicons.
 - **In-page search (⌘F)** — highlight, match counter, next / prev.

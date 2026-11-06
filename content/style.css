@@ -120,6 +120,7 @@ html, body {
 }
 .tab:hover { background: var(--hover); }
 .tab.active { background: var(--tab-active); color: var(--fg); box-shadow: var(--tab-shadow); }
+.tab.dragging { opacity: .55; }
 .tab.active .label { font-weight: 500; }
 .tab .favicon {
   flex: 0 0 auto;

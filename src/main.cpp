@@ -937,6 +937,31 @@ namespace
             switch_tab(tabs[(idx + dir + n) % n].id);
         }
 
+        void reorder_tabs(const std::vector<int> &ids) // match the shell's drag-reordered order
+        {
+            std::vector<Tab> out;
+            out.reserve(tabs.size());
+            for (int id : ids)
+            {
+                for (auto &t : tabs)
+                {
+                    if (t.view && t.id == id)
+                    {
+                        out.push_back(std::move(t));
+                        break;
+                    }
+                }
+            }
+            for (auto &t : tabs) // keep any not mentioned (safety)
+            {
+                if (t.view)
+                {
+                    out.push_back(std::move(t));
+                }
+            }
+            tabs = std::move(out);
+        }
+
         // Install keyboard-shortcut capture + routing on a webview (shell or tab).
         void install_shortcuts(saucer::smartview *view)
         {
@@ -1045,6 +1070,7 @@ namespace
         b->shell->expose("mb_new_tab", [b] { b->new_tab("", true); });
         b->shell->expose("mb_close_tab", [b](int id) { b->close_tab(id); });
         b->shell->expose("mb_switch_tab", [b](int id) { b->switch_tab(id); });
+        b->shell->expose("mb_reorder_tabs", [b](std::vector<int> ids) { b->reorder_tabs(ids); });
         b->shell->expose("mb_back", [b] { b->back(); });
         b->shell->expose("mb_forward", [b] { b->forward(); });
         b->shell->expose("mb_reload", [b] { b->reload(); });
