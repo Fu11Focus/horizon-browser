@@ -1,4 +1,4 @@
-// minibrowser — minimalist cross-platform developer browser.
+// Horizon — minimalist cross-platform developer browser.
 //
 // Architecture: a single native window hosts a "shell" webview (the chrome:
 // tab strip + toolbar, rendered as an embedded HTML/CSS/JS page) docked at the
@@ -63,7 +63,7 @@ namespace
         const char *home = std::getenv("HOME");
         fs::path base    = xdg ? fs::path(xdg) : (home ? fs::path(home) / ".local" / "share" : fs::temp_directory_path());
 #endif
-        auto dir = base / "minibrowser";
+        auto dir = base / "Horizon";
         std::error_code ec;
         fs::create_directories(dir, ec);
         return dir;
@@ -795,7 +795,7 @@ namespace
 
         std::optional<PendingCred> pending; // credential awaiting a save decision
 
-        std::string pw_service() const { return "minibrowser:" + profile; }
+        std::string pw_service() const { return "Horizon:" + profile; }
 
         void offer_credentials(std::string origin, std::string username, std::string password)
         {
@@ -968,7 +968,7 @@ namespace
         b->session_label = incognito ? make_incognito_label() : profile_dir(profile).string();
         b->window        = saucer::window::create(app).value();
 
-        b->window->set_title("minibrowser — " + b->profile);
+        b->window->set_title("Horizon — " + b->profile);
         b->window->set_size({.w = b->width, .h = b->height});
 
 #ifndef __APPLE__
@@ -1089,5 +1089,5 @@ coco::stray start(saucer::application *app)
 
 int main()
 {
-    return saucer::application::create({.id = "minibrowser"})->run(start);
+    return saucer::application::create({.id = "Horizon"})->run(start);
 }

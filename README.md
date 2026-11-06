@@ -1,4 +1,4 @@
-# minibrowser
+# Horizon
 
 A minimalist, cross-platform developer browser built in C++ on top of each OS's
 **native webview** (no bundled Chromium). Tiny binary, low memory, full native
@@ -51,7 +51,7 @@ Requires CMake, Ninja and a C++23 compiler (Apple clang):
 ```sh
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-open build/minibrowser.app
+open build/Horizon.app
 ```
 
 The `content/` UI is compiled into the executable, so the binary is
@@ -89,7 +89,7 @@ macOS-only for now; Windows (Credential Manager) and Linux (libsecret) are TODO
 
 Each profile is an isolated browsing context (cookies, storage, sessions) kept
 in its own directory under the app-data folder
-(`~/Library/Application Support/minibrowser/profiles/<name>/` on macOS). One
+(`~/Library/Application Support/Horizon/profiles/<name>/` on macOS). One
 window runs one profile; the profiles panel (profile button in the toolbar)
 lists profiles, switches to one (opens its window), creates new ones, and can
 open another window of the current profile (also ⌘N). The last-used profile is
