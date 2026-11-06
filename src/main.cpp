@@ -254,7 +254,7 @@ namespace
           return;
         }
         switch (c) {
-          case "KeyT": e.preventDefault(); return send("new_tab");
+          case "KeyT": e.preventDefault(); return send(e.shiftKey ? "reopen_tab" : "new_tab");
           case "KeyW": e.preventDefault(); return send("close_tab");
           case "KeyL": e.preventDefault(); return send("focus_addr");
           case "KeyR": e.preventDefault(); return send("reload");
@@ -556,6 +556,7 @@ namespace
         bool incognito            = false;      // ephemeral session, no password vault
 
         std::vector<Tab> tabs;
+        std::vector<std::string> closed_tabs; // URLs of recently closed tabs (reopen stack)
         int active     = -1;
         int next_id    = 1;
         int width          = 1200;
@@ -689,6 +690,15 @@ namespace
             const bool was_active = active == id;
             const int  idx        = static_cast<int>(it - tabs.begin());
 
+            if (const std::string url = it->view->url().string(); !url.empty()) // remember for ⇧⌘T
+            {
+                closed_tabs.push_back(url);
+                if (closed_tabs.size() > 25)
+                {
+                    closed_tabs.erase(closed_tabs.begin());
+                }
+            }
+
             tabs.erase(it); // destroys the content webview
             shell->execute("window.mbRemoveTab({})", id);
 
@@ -706,6 +716,17 @@ namespace
             }
 
             layout();
+        }
+
+        void reopen_tab() // ⇧⌘T: reopen the most recently closed tab
+        {
+            if (closed_tabs.empty())
+            {
+                return;
+            }
+            const std::string url = closed_tabs.back();
+            closed_tabs.pop_back();
+            new_tab(url);
         }
 
         void switch_tab(int id)
@@ -897,6 +918,7 @@ namespace
         void on_key(const std::string &k)
         {
             if (k == "new_tab")          new_tab();
+            else if (k == "reopen_tab")  reopen_tab();
             else if (k == "close_tab")   { if (active != -1) close_tab(active); }
             else if (k == "reload")      reload();
             else if (k == "back")        back();

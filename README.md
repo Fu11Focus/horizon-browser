@@ -64,7 +64,7 @@ self-contained — no external asset files at runtime.
 - [x] Address-bar navigation, back / forward / reload, URL+title sync
 - [x] Multiple tabs (create / close / switch, state preserved per tab)
 - [x] DevTools toggle (toolbar button) + right-click Inspect
-- [x] Keyboard shortcuts (⌘T/W/L/R, ⌘\[ / ⌘\], ⌘1–9, ⌘⌥I)
+- [x] Keyboard shortcuts (⌘T/W/L/R, ⇧⌘T reopen, ⌘\[ / ⌘\], ⌘1–9, ⌘⌥I)
 - [x] Chrome-style equal-width tabs (shrink as more open, then scroll)
 - [x] Favicons in the tab strip (resolved from the page DOM; works on local sites too)
 - [x] Brave-style top row: tabs beside the native window controls
@@ -110,6 +110,7 @@ at once. For sessions that should persist, use profiles instead.
 | Shortcut            | Action                 |
 | ------------------- | ---------------------- |
 | ⌘T / Ctrl+T         | New tab                |
+| ⇧⌘T / Ctrl+Shift+T  | Reopen last closed tab |
 | ⌘W / Ctrl+W         | Close current tab      |
 | ⌘L / Ctrl+L         | Focus the address bar  |
 | ⌘R / Ctrl+R         | Reload                 |
