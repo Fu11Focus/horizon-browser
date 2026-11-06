@@ -9,7 +9,7 @@ Tiny, fast, cross-platform browser for web development, built in C++ on each OS'
 
 <br>
 
-<img src="assets/screenshot.png" alt="Horizon — tabs beside the native window controls, dark theme" width="840">
+<img src="assets/demo.gif" alt="Horizon demo — tabs, navigation, in-page search and the profiles panel" width="840">
 
 <br><br>
 
