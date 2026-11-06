@@ -116,6 +116,7 @@ assets/             # app icon: icon.svg + make_icons.py → .icns / .ico / .png
 | ⌘\[ / ⌘\]           | Back / Forward           |
 | ⌘1 … ⌘8             | Switch to tab 1 … 8      |
 | ⌘9                  | Switch to the last tab   |
+| Ctrl+Tab / Ctrl+⇧+Tab | Next / previous tab    |
 | ⌘F / Ctrl+F         | Find on page             |
 | ⌘N / Ctrl+N         | New window, same profile |
 | ⇧⌘N / Ctrl+Shift+N  | New incognito window     |

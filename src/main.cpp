@@ -262,6 +262,7 @@ namespace
           case "BracketRight": e.preventDefault(); return send("forward");
           case "KeyF": e.preventDefault(); return send("find");
           case "KeyN": e.preventDefault(); return send(e.shiftKey ? "new_incognito" : "new_window");
+          case "Tab": e.preventDefault(); return send(e.shiftKey ? "prev_tab" : "next_tab");
         }
         if (c && c.indexOf("Digit") === 0) {
           var n = parseInt(c.slice(5), 10);
@@ -917,6 +918,25 @@ namespace
             }
         }
 
+        void cycle_tab(int dir) // Ctrl+Tab / Ctrl+Shift+Tab: next / previous, wrapping
+        {
+            if (tabs.empty())
+            {
+                return;
+            }
+            const int n = static_cast<int>(tabs.size());
+            int idx     = 0;
+            for (int i = 0; i < n; ++i)
+            {
+                if (tabs[i].id == active)
+                {
+                    idx = i;
+                    break;
+                }
+            }
+            switch_tab(tabs[(idx + dir + n) % n].id);
+        }
+
         // Install keyboard-shortcut capture + routing on a webview (shell or tab).
         void install_shortcuts(saucer::smartview *view)
         {
@@ -937,6 +957,8 @@ namespace
             else if (k == "new_window")  open_window(app, profile);
             else if (k == "new_incognito") open_window(app, profile, true);
             else if (k == "focus_addr")  { if (shell) { focus_webview(shell.get()); shell->execute("window.mbFocusAddr && window.mbFocusAddr()"); } }
+            else if (k == "next_tab")    cycle_tab(1);
+            else if (k == "prev_tab")    cycle_tab(-1);
             else if (k.rfind("tab:", 0) == 0) switch_to_index(std::atoi(k.c_str() + 4));
         }
     };
