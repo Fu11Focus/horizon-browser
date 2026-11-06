@@ -910,9 +910,19 @@ namespace
         }
     };
 
-    // All open browser windows (one per profile instance). Kept alive here for
-    // the lifetime of their window; a window's `closed` event removes its entry.
-    std::vector<std::unique_ptr<Browser>> g_browsers;
+    // All open browser windows (one per profile instance). A window's `closed`
+    // event removes its entry (destroying the webviews while the app run loop is
+    // alive, which is safe).
+    //
+    // Intentionally heap-allocated and never freed: any Browser still present at
+    // program exit must NOT be destroyed during static destruction.
+    // saucer::webview::~webview() blocks on a future serviced by WebKit helper
+    // threads, which are already stopped by the time `exit()` runs atexit
+    // destructors — so tearing a surviving window down there deadlocks (observed
+    // as a spinning-cursor hang after the last window closes). Leaking the
+    // container avoids that; the OS reclaims the memory and kills the WebKit
+    // child processes on exit anyway.
+    std::vector<std::unique_ptr<Browser>> &g_browsers = *new std::vector<std::unique_ptr<Browser>>();
 
     Browser *open_window(saucer::application *app, std::string profile, bool incognito)
     {
