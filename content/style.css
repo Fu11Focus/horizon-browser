@@ -129,3 +129,36 @@ button.nav:active { background: rgba(128,128,128,.30); }
   -webkit-user-select: text;
 }
 #addr:focus { border-color: var(--accent); }
+
+/* ---- find bar ---- */
+#find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+#find[hidden] { display: none; }
+#find-input {
+  flex: 0 0 260px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+#find-input:focus { border-color: var(--accent); }
+#find-input.nomatch { border-color: #e5534b; }
+#find-count {
+  min-width: 48px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}

@@ -66,6 +66,8 @@ self-contained — no external asset files at runtime.
 - [x] Keyboard shortcuts (⌘T/W/L/R, ⌘\[ / ⌘\], ⌘1–9, ⌘⌥I)
 - [x] Chrome-style equal-width tabs (shrink as more open, then scroll)
 - [x] Favicons in the tab strip (resolved from the page DOM; works on local sites too)
+- [x] Brave-style top row: tabs beside the native window controls
+- [x] In-page search (⌘F): highlight, match counter, next/prev
 - [ ] Windows / Linux build verification
 
 ## Keyboard shortcuts
@@ -79,6 +81,7 @@ self-contained — no external asset files at runtime.
 | ⌘\[ / ⌘\]           | Back / Forward         |
 | ⌘1 … ⌘8             | Switch to tab 1 … 8    |
 | ⌘9                  | Switch to the last tab |
+| ⌘F / Ctrl+F         | Find on page           |
 | ⌘⌥I / Ctrl+Alt+I    | Toggle DevTools        |
 
 Shortcuts are captured inside each webview (saucer exposes no window-level key

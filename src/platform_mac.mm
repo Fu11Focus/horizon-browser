@@ -28,4 +28,21 @@ namespace mb
             [w standardWindowButton:NSWindowZoomButton].hidden        = NO;
         }
     }
+
+    // Give keyboard focus to a specific webview. Needed because the chrome and
+    // page content are separate webviews: when a shortcut fires inside the page,
+    // focusing the shell's address/find input requires making the shell webview
+    // the window's first responder first.
+    void focus_webview(saucer::webview *view)
+    {
+        @autoreleasepool
+        {
+            WKWebView *wv = view->native<true>().webview;
+            if (!wv)
+            {
+                return;
+            }
+            [wv.window makeFirstResponder:wv];
+        }
+    }
 } // namespace mb

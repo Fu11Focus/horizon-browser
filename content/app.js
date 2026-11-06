@@ -91,6 +91,24 @@
     a.select();
   };
 
+  // ---- in-page search (driven by the C++ core) ----
+  window.mbOpenFind = () => {
+    el("find").hidden = false;
+    const i = el("find-input");
+    i.focus();
+    i.select();
+    if (i.value) call("mb_find", i.value); // re-run existing query
+  };
+  window.mbCloseFind = () => {
+    el("find").hidden = true;
+    el("find-input").classList.remove("nomatch");
+  };
+  window.mbFindResult = (current, total) => {
+    el("find-count").textContent = current + "/" + total;
+    const q = el("find-input");
+    q.classList.toggle("nomatch", !!q.value && total === 0);
+  };
+
   function wire() {
     el("back").onclick = () => call("mb_back");
     el("fwd").onclick = () => call("mb_forward");
@@ -108,6 +126,17 @@
         const info = tabs.get(activeId);
         if (info) addr.value = info.url || "";
       }
+    });
+
+    // find bar
+    el("find-prev").onclick = () => call("mb_find_prev");
+    el("find-next").onclick = () => call("mb_find_next");
+    el("find-close").onclick = () => call("mb_find_close");
+    const fi = el("find-input");
+    fi.addEventListener("input", () => call("mb_find", fi.value));
+    fi.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); call(e.shiftKey ? "mb_find_prev" : "mb_find_next"); }
+      if (e.key === "Escape") { e.preventDefault(); call("mb_find_close"); }
     });
   }
 

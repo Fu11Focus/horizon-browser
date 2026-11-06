@@ -24,7 +24,7 @@ add_executable(minibrowser MACOSX_BUNDLE
 )
 
 if (APPLE)
-    target_sources(minibrowser PRIVATE src/titlebar_mac.mm)
+    target_sources(minibrowser PRIVATE src/platform_mac.mm)
     target_link_libraries(minibrowser PRIVATE "-framework Cocoa" "-framework WebKit")
 endif ()
 

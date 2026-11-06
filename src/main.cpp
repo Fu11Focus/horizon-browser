@@ -18,14 +18,26 @@
 #ifdef __APPLE__
 namespace mb
 {
-    void configure_titlebar(saucer::window *); // src/titlebar_mac.mm
+    void configure_titlebar(saucer::window *); // src/platform_mac.mm
+    void focus_webview(saucer::webview *);     // src/platform_mac.mm
 }
 #endif
 
 namespace
 {
+    void focus_webview([[maybe_unused]] saucer::webview *view)
+    {
+#ifdef __APPLE__
+        mb::focus_webview(view);
+#endif
+    }
+
     // Height of the chrome strip (tab row + toolbar). Must match content/style.css.
     constexpr int kChromeHeight = 80;
+
+    // Extra height of the find bar when in-page search is open. Must match #find
+    // in content/style.css.
+    constexpr int kFindHeight = 40;
 
     // Injected into every webview (shell + each tab). Captures browser keyboard
     // shortcuts and forwards them to the C++ core. saucer exposes no window-level
@@ -50,6 +62,7 @@ namespace
           case "KeyR": e.preventDefault(); return send("reload");
           case "BracketLeft":  e.preventDefault(); return send("back");
           case "BracketRight": e.preventDefault(); return send("forward");
+          case "KeyF": e.preventDefault(); return send("find");
         }
         if (c && c.indexOf("Digit") === 0) {
           var n = parseInt(c.slice(5), 10);
@@ -78,6 +91,82 @@ namespace
       function report() { try { var h = pick(); if (h) window.saucer.exposed.mb_favicon(h); } catch (e) {} }
       report();
       window.addEventListener("load", report);
+    })();
+    )js";
+
+    // Injected into each content tab. In-page search: highlights matches, tracks
+    // a current match, and reports (current, total) back to the core. Exposed as
+    // window.__mbFind.{search,next,prev,clear}; the core drives it via execute().
+    constexpr std::string_view kFindScript = R"js(
+    (function () {
+      if (window.__mbFind) return;
+      var MARK = "mb-find-mark", CUR = "mb-find-current";
+      var matches = [], idx = -1, styled = false;
+
+      function ensureStyle() {
+        if (styled) return;
+        styled = true;
+        var s = document.createElement("style");
+        s.textContent = "." + MARK + "{background:#ffd54a;color:#000} ." + CUR + "{background:#ff9800;color:#000}";
+        (document.head || document.documentElement).appendChild(s);
+      }
+      function report() {
+        try { window.saucer.exposed.mb_find_result(matches.length ? idx + 1 : 0, matches.length); } catch (e) {}
+      }
+      function clear() {
+        for (var i = 0; i < matches.length; i++) {
+          var m = matches[i], p = m.parentNode;
+          if (p) { p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); }
+        }
+        matches = []; idx = -1;
+      }
+      function focusCurrent() {
+        for (var i = 0; i < matches.length; i++) matches[i].classList.remove(CUR);
+        if (idx >= 0 && idx < matches.length) {
+          matches[idx].classList.add(CUR);
+          matches[idx].scrollIntoView({ block: "center", inline: "nearest" });
+        }
+      }
+      function search(q) {
+        clear();
+        if (!q) { report(); return; }
+        ensureStyle();
+        var needle = q.toLowerCase();
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode: function (n) {
+            if (!n.nodeValue || !n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+            var p = n.parentNode; if (!p) return NodeFilter.FILTER_REJECT;
+            var t = p.nodeName;
+            if (t === "SCRIPT" || t === "STYLE" || t === "NOSCRIPT" || t === "TEXTAREA") return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        var nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+        for (var k = 0; k < nodes.length; k++) {
+          var node = nodes[k], text = node.nodeValue, lower = text.toLowerCase();
+          var pos = lower.indexOf(needle); if (pos === -1) continue;
+          var frag = document.createDocumentFragment(), last = 0;
+          while (pos !== -1) {
+            if (pos > last) frag.appendChild(document.createTextNode(text.slice(last, pos)));
+            var mk = document.createElement("mark");
+            mk.className = MARK; mk.textContent = text.slice(pos, pos + needle.length);
+            frag.appendChild(mk); matches.push(mk);
+            last = pos + needle.length; pos = lower.indexOf(needle, last);
+          }
+          if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+          node.parentNode.replaceChild(frag, node);
+        }
+        if (matches.length) { idx = 0; focusCurrent(); }
+        report();
+      }
+      function step(d) { if (matches.length) { idx = (idx + d + matches.length) % matches.length; focusCurrent(); report(); } }
+
+      window.__mbFind = {
+        search: search,
+        next: function () { step(1); },
+        prev: function () { step(-1); },
+        clear: function () { clear(); report(); }
+      };
     })();
     )js";
 
@@ -145,10 +234,11 @@ namespace
         std::unique_ptr<saucer::smartview> shell;
 
         std::vector<Tab> tabs;
-        int active  = -1;
-        int next_id = 1;
-        int width   = 1200;
-        int height  = 800;
+        int active     = -1;
+        int next_id    = 1;
+        int width      = 1200;
+        int height     = 800;
+        bool find_open = false; // in-page search bar visible (adds kFindHeight to chrome)
 
         Tab *find(int id)
         {
@@ -184,16 +274,18 @@ namespace
                 height        = sz.h;
             }
 
+            const int chrome = kChromeHeight + (find_open ? kFindHeight : 0);
+
             if (shell)
             {
-                place(shell.get(), 0, 0, width, kChromeHeight);
+                place(shell.get(), 0, 0, width, chrome);
             }
 
             for (auto &t : tabs)
             {
                 if (t.id == active)
                 {
-                    place(t.view.get(), 0, kChromeHeight, width, height - kChromeHeight);
+                    place(t.view.get(), 0, chrome, width, height - chrome);
                 }
                 else
                 {
@@ -218,6 +310,11 @@ namespace
                          [this, id](std::string href)
                          { shell->execute("window.mbUpdateTab({}, {{favicon: {}}})", id, href); });
             view->inject({.code = std::string{kFaviconScript}, .run_at = saucer::script::time::ready});
+
+            view->expose("mb_find_result",
+                         [this](int current, int total)
+                         { shell->execute("window.mbFindResult({}, {})", current, total); });
+            view->inject({.code = std::string{kFindScript}, .run_at = saucer::script::time::creation});
 
             view->on<saucer::webview::event::title>(
                 [this, id](std::string_view title)
@@ -282,10 +379,50 @@ namespace
             {
                 return;
             }
+            close_find(); // find state is per-page; don't carry it across tabs
             active = id;
             layout();
             shell->execute("window.mbSetActive({})", id);
         }
+
+        // ---- in-page search ----
+
+        void open_find()
+        {
+            find_open = true;
+            layout();
+            shell->execute("window.mbOpenFind()");
+            if (shell)
+            {
+                focus_webview(shell.get()); // so the find input receives typing
+            }
+        }
+
+        void close_find()
+        {
+            if (!find_open)
+            {
+                return;
+            }
+            find_open = false;
+            if (auto *t = find(active))
+            {
+                t->view->execute("window.__mbFind && window.__mbFind.clear()");
+            }
+            shell->execute("window.mbCloseFind()");
+            layout();
+        }
+
+        void find_query(std::string q)
+        {
+            if (auto *t = find(active))
+            {
+                t->view->execute("window.__mbFind && window.__mbFind.search({})", std::move(q));
+            }
+        }
+
+        void find_next() { if (auto *t = find(active)) t->view->execute("window.__mbFind && window.__mbFind.next()"); }
+        void find_prev() { if (auto *t = find(active)) t->view->execute("window.__mbFind && window.__mbFind.prev()"); }
 
         void navigate(std::string_view input)
         {
@@ -335,7 +472,8 @@ namespace
             else if (k == "back")        back();
             else if (k == "forward")     forward();
             else if (k == "devtools")    toggle_devtools();
-            else if (k == "focus_addr")  { if (shell) shell->execute("window.mbFocusAddr && window.mbFocusAddr()"); }
+            else if (k == "find")        open_find();
+            else if (k == "focus_addr")  { if (shell) { focus_webview(shell.get()); shell->execute("window.mbFocusAddr && window.mbFocusAddr()"); } }
             else if (k.rfind("tab:", 0) == 0) switch_to_index(std::atoi(k.c_str() + 4));
         }
     };
@@ -373,6 +511,10 @@ coco::stray start(saucer::application *app)
     browser.shell->expose("mb_forward", [&browser] { browser.forward(); });
     browser.shell->expose("mb_reload", [&browser] { browser.reload(); });
     browser.shell->expose("mb_toggle_devtools", [&browser] { browser.toggle_devtools(); });
+    browser.shell->expose("mb_find", [&browser](std::string q) { browser.find_query(std::move(q)); });
+    browser.shell->expose("mb_find_next", [&browser] { browser.find_next(); });
+    browser.shell->expose("mb_find_prev", [&browser] { browser.find_prev(); });
+    browser.shell->expose("mb_find_close", [&browser] { browser.close_find(); });
 
     browser.shell->embed(saucer::embedded::all());
     browser.shell->serve("/index.html");
