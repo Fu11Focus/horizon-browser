@@ -620,7 +620,7 @@ namespace
             }
         }
 
-        int new_tab(const std::string &url = "https://www.google.com/")
+        int new_tab(const std::string &url = "", bool focus_addr = false)
         {
             Tab tab;
             tab.id   = next_id++;
@@ -670,11 +670,20 @@ namespace
             tabs.push_back(std::move(tab));
             active = id;
 
-            view->set_url(make_url(url));
+            if (!url.empty()) // empty = blank new tab (nothing to steal address-bar focus)
+            {
+                view->set_url(make_url(url));
+            }
             layout();
 
             shell->execute("window.mbAddTab({}, {{url: {}, title: \"\"}})", id, url);
             shell->execute("window.mbSetActive({})", id);
+
+            if (focus_addr) // put the cursor in the address bar, ready to type
+            {
+                focus_webview(shell.get());
+                shell->execute("window.mbFocusAddr && window.mbFocusAddr()");
+            }
 
             return id;
         }
@@ -704,7 +713,7 @@ namespace
 
             if (tabs.empty())
             {
-                new_tab(); // never leave the window empty
+                new_tab("", true); // never leave the window empty
                 return;
             }
 
@@ -1009,9 +1018,9 @@ namespace
             });
 
         // Bridge: shell UI -> C++ core.
-        b->shell->expose("mb_ready", [b] { if (b->tabs.empty()) b->new_tab(); });
+        b->shell->expose("mb_ready", [b] { if (b->tabs.empty()) b->new_tab("", true); });
         b->shell->expose("mb_navigate", [b](std::string u) { b->navigate(u); });
-        b->shell->expose("mb_new_tab", [b] { b->new_tab(); });
+        b->shell->expose("mb_new_tab", [b] { b->new_tab("", true); });
         b->shell->expose("mb_close_tab", [b](int id) { b->close_tab(id); });
         b->shell->expose("mb_switch_tab", [b](int id) { b->switch_tab(id); });
         b->shell->expose("mb_back", [b] { b->back(); });
