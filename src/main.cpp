@@ -6,7 +6,10 @@
 // and drives them; the shell talks to the core over saucer's JS<->C++ bridge.
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -25,6 +28,96 @@ namespace mb
 
 namespace
 {
+    namespace fs = std::filesystem;
+
+    // ---- profiles: each profile is an isolated storage directory ----
+
+    fs::path app_data_dir()
+    {
+#if defined(__APPLE__)
+        const char *home = std::getenv("HOME");
+        fs::path base    = home ? fs::path(home) / "Library" / "Application Support" : fs::temp_directory_path();
+#elif defined(_WIN32)
+        const char *appdata = std::getenv("APPDATA");
+        fs::path base       = appdata ? fs::path(appdata) : fs::temp_directory_path();
+#else
+        const char *xdg  = std::getenv("XDG_DATA_HOME");
+        const char *home = std::getenv("HOME");
+        fs::path base    = xdg ? fs::path(xdg) : (home ? fs::path(home) / ".local" / "share" : fs::temp_directory_path());
+#endif
+        auto dir = base / "minibrowser";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        return dir;
+    }
+
+    fs::path profiles_root()
+    {
+        auto dir = app_data_dir() / "profiles";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        return dir;
+    }
+
+    fs::path profile_dir(const std::string &name)
+    {
+        auto dir = profiles_root() / name;
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        return dir;
+    }
+
+    // Keep profile names filesystem-safe and human-friendly.
+    std::string sanitize_profile(std::string_view in)
+    {
+        std::string out;
+        for (char c : in)
+        {
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' || c == '_')
+            {
+                out += c;
+            }
+        }
+        const auto b = out.find_first_not_of(' ');
+        const auto e = out.find_last_not_of(' ');
+        out          = (b == std::string::npos) ? std::string{} : out.substr(b, e - b + 1);
+        return out.substr(0, 40);
+    }
+
+    std::vector<std::string> list_profiles()
+    {
+        std::vector<std::string> out;
+        std::error_code ec;
+        for (const auto &entry : fs::directory_iterator(profiles_root(), ec))
+        {
+            if (entry.is_directory())
+            {
+                out.push_back(entry.path().filename().string());
+            }
+        }
+        if (out.empty())
+        {
+            profile_dir("Default");
+            out.emplace_back("Default");
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+
+    std::string last_profile()
+    {
+        std::ifstream f(app_data_dir() / "last_profile");
+        std::string name;
+        std::getline(f, name);
+        return name.empty() ? "Default" : name;
+    }
+
+    void set_last_profile(const std::string &name)
+    {
+        std::ofstream f(app_data_dir() / "last_profile", std::ios::trunc);
+        f << name;
+    }
+
     void focus_webview([[maybe_unused]] saucer::webview *view)
     {
 #ifdef __APPLE__
@@ -38,6 +131,9 @@ namespace
     // Extra height of the find bar when in-page search is open. Must match #find
     // in content/style.css.
     constexpr int kFindHeight = 40;
+
+    // Extra height of the profiles panel when open. Must match #profiles in CSS.
+    constexpr int kProfilesHeight = 46;
 
     // Injected into every webview (shell + each tab). Captures browser keyboard
     // shortcuts and forwards them to the C++ core. saucer exposes no window-level
@@ -232,13 +328,15 @@ namespace
         saucer::application *app{};
         std::shared_ptr<saucer::window> window;
         std::unique_ptr<saucer::smartview> shell;
+        std::string profile = "Default"; // isolated storage context for this window
 
         std::vector<Tab> tabs;
         int active     = -1;
         int next_id    = 1;
-        int width      = 1200;
-        int height     = 800;
-        bool find_open = false; // in-page search bar visible (adds kFindHeight to chrome)
+        int width          = 1200;
+        int height         = 800;
+        bool find_open     = false; // in-page search bar visible (adds kFindHeight to chrome)
+        bool profiles_open = false; // profiles panel visible (adds kProfilesHeight)
 
         Tab *find(int id)
         {
@@ -274,7 +372,8 @@ namespace
                 height        = sz.h;
             }
 
-            const int chrome = kChromeHeight + (find_open ? kFindHeight : 0);
+            const int chrome =
+                kChromeHeight + (find_open ? kFindHeight : 0) + (profiles_open ? kProfilesHeight : 0);
 
             if (shell)
             {
@@ -298,7 +397,8 @@ namespace
         {
             Tab tab;
             tab.id   = next_id++;
-            tab.view = std::make_unique<saucer::smartview>(saucer::smartview::create({.window = window}).value());
+            tab.view = std::make_unique<saucer::smartview>(
+                saucer::smartview::create({.window = window, .storage_path = profile_dir(profile)}).value());
 
             const int id = tab.id;
             auto *view   = tab.view.get();
@@ -424,6 +524,22 @@ namespace
         void find_next() { if (auto *t = find(active)) t->view->execute("window.__mbFind && window.__mbFind.next()"); }
         void find_prev() { if (auto *t = find(active)) t->view->execute("window.__mbFind && window.__mbFind.prev()"); }
 
+        // ---- profiles panel ----
+
+        void toggle_profiles()
+        {
+            profiles_open = !profiles_open;
+            layout();
+            if (profiles_open)
+            {
+                shell->execute("window.mbOpenProfiles()");
+            }
+            else
+            {
+                shell->execute("window.mbCloseProfiles()");
+            }
+        }
+
         void navigate(std::string_view input)
         {
             if (auto *t = find(active))
@@ -477,50 +593,105 @@ namespace
             else if (k.rfind("tab:", 0) == 0) switch_to_index(std::atoi(k.c_str() + 4));
         }
     };
+
+    // All open browser windows (one per profile instance). Kept alive here for
+    // the lifetime of their window; a window's `closed` event removes its entry.
+    std::vector<std::unique_ptr<Browser>> g_browsers;
+
+    Browser *open_window(saucer::application *app, std::string profile)
+    {
+        auto owned = std::make_unique<Browser>();
+        auto *b    = owned.get();
+
+        b->app     = app;
+        b->profile = profile;
+        b->window  = saucer::window::create(app).value();
+
+        b->window->set_title("minibrowser — " + profile);
+        b->window->set_size({.w = b->width, .h = b->height});
+
+        // Chrome/Brave-style top row: hide the title bar but keep the window
+        // controls. Draggable regions are marked `data-webview-drag` in the shell.
+#ifdef __APPLE__
+        mb::configure_titlebar(b->window.get());
+#endif
+
+        b->shell = std::make_unique<saucer::smartview>(saucer::smartview::create({.window = b->window}).value());
+        b->install_shortcuts(b->shell.get());
+
+        b->window->on<saucer::window::event::resize>([b](int, int) { b->layout(); });
+
+        // When the window closes, drop its Browser (deferred, so we are not
+        // destroying the window from inside its own event). Quit on the last one.
+        b->window->on<saucer::window::event::closed>(
+            [app, b]
+            {
+                app->post(
+                    [app, b]
+                    {
+                        std::erase_if(g_browsers, [&](const std::unique_ptr<Browser> &p) { return p.get() == b; });
+                        if (g_browsers.empty())
+                        {
+                            app->quit();
+                        }
+                    });
+            });
+
+        // Bridge: shell UI -> C++ core.
+        b->shell->expose("mb_ready", [b] { if (b->tabs.empty()) b->new_tab(); });
+        b->shell->expose("mb_navigate", [b](std::string u) { b->navigate(u); });
+        b->shell->expose("mb_new_tab", [b] { b->new_tab(); });
+        b->shell->expose("mb_close_tab", [b](int id) { b->close_tab(id); });
+        b->shell->expose("mb_switch_tab", [b](int id) { b->switch_tab(id); });
+        b->shell->expose("mb_back", [b] { b->back(); });
+        b->shell->expose("mb_forward", [b] { b->forward(); });
+        b->shell->expose("mb_reload", [b] { b->reload(); });
+        b->shell->expose("mb_toggle_devtools", [b] { b->toggle_devtools(); });
+        b->shell->expose("mb_find", [b](std::string q) { b->find_query(std::move(q)); });
+        b->shell->expose("mb_find_next", [b] { b->find_next(); });
+        b->shell->expose("mb_find_prev", [b] { b->find_prev(); });
+        b->shell->expose("mb_find_close", [b] { b->close_find(); });
+
+        // Bridge: profiles.
+        b->shell->expose("mb_profiles", [] { return list_profiles(); });
+        b->shell->expose("mb_current_profile", [b] { return b->profile; });
+        b->shell->expose("mb_toggle_profiles", [b] { b->toggle_profiles(); });
+        b->shell->expose("mb_switch_profile",
+                         [app](std::string name)
+                         {
+                             const auto all = list_profiles();
+                             if (std::find(all.begin(), all.end(), name) != all.end())
+                             {
+                                 open_window(app, name);
+                             }
+                         });
+        b->shell->expose("mb_new_profile",
+                         [app](std::string name)
+                         {
+                             const auto clean = sanitize_profile(name);
+                             if (!clean.empty())
+                             {
+                                 profile_dir(clean);
+                                 open_window(app, clean);
+                             }
+                         });
+
+        b->shell->embed(saucer::embedded::all());
+        b->shell->serve("/index.html");
+        b->layout();
+        b->window->show();
+
+        set_last_profile(profile);
+
+        g_browsers.push_back(std::move(owned));
+        return b;
+    }
 } // namespace
 
 coco::stray start(saucer::application *app)
 {
-    Browser browser;
-    browser.app    = app;
-    browser.window = saucer::window::create(app).value();
-
-    browser.window->set_title("minibrowser");
-    browser.window->set_size({.w = browser.width, .h = browser.height});
-
-    // Chrome/Brave-style top row: hide the title bar but keep the window
-    // controls. Draggable regions are marked `data-webview-drag` in the shell.
-#ifdef __APPLE__
-    mb::configure_titlebar(browser.window.get());
-#endif
-
-    browser.shell =
-        std::make_unique<saucer::smartview>(saucer::smartview::create({.window = browser.window}).value());
-
-    browser.install_shortcuts(browser.shell.get());
-
-    browser.window->on<saucer::window::event::resize>([&browser](int, int) { browser.layout(); });
-
-    // Bridge: shell UI -> C++ core.
-    browser.shell->expose("mb_ready", [&browser] { if (browser.tabs.empty()) browser.new_tab(); });
-    browser.shell->expose("mb_navigate", [&browser](std::string u) { browser.navigate(u); });
-    browser.shell->expose("mb_new_tab", [&browser] { browser.new_tab(); });
-    browser.shell->expose("mb_close_tab", [&browser](int id) { browser.close_tab(id); });
-    browser.shell->expose("mb_switch_tab", [&browser](int id) { browser.switch_tab(id); });
-    browser.shell->expose("mb_back", [&browser] { browser.back(); });
-    browser.shell->expose("mb_forward", [&browser] { browser.forward(); });
-    browser.shell->expose("mb_reload", [&browser] { browser.reload(); });
-    browser.shell->expose("mb_toggle_devtools", [&browser] { browser.toggle_devtools(); });
-    browser.shell->expose("mb_find", [&browser](std::string q) { browser.find_query(std::move(q)); });
-    browser.shell->expose("mb_find_next", [&browser] { browser.find_next(); });
-    browser.shell->expose("mb_find_prev", [&browser] { browser.find_prev(); });
-    browser.shell->expose("mb_find_close", [&browser] { browser.close_find(); });
-
-    browser.shell->embed(saucer::embedded::all());
-    browser.shell->serve("/index.html");
-    browser.layout();
-
-    browser.window->show();
+    list_profiles(); // ensure a Default profile exists
+    open_window(app, last_profile());
 
     co_await app->finish();
 }

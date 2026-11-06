@@ -11,6 +11,7 @@
   const tabs = new Map();      // id -> { url, title }
   let activeId = null;
   let editing = false;         // user is typing in the address bar
+  let currentProfile = "";
 
   const el = (id) => document.getElementById(id);
   const exposed = () => window.saucer && window.saucer.exposed;
@@ -109,12 +110,40 @@
     q.classList.toggle("nomatch", !!q.value && total === 0);
   };
 
+  // ---- profiles ----
+  async function buildChips() {
+    const chips = el("profile-chips");
+    chips.innerHTML = "";
+    let list = [];
+    try { list = (await call("mb_profiles")) || []; } catch (e) {}
+    for (const name of list) {
+      const c = document.createElement("div");
+      c.className = "chip" + (name === currentProfile ? " current" : "");
+      c.textContent = name;
+      if (name !== currentProfile) c.onclick = () => { call("mb_switch_profile", name); call("mb_toggle_profiles"); };
+      chips.appendChild(c);
+    }
+  }
+  window.mbOpenProfiles = () => { el("profiles").hidden = false; buildChips(); };
+  window.mbCloseProfiles = () => { el("profiles").hidden = true; el("profile-name").value = ""; };
+
   function wire() {
     el("back").onclick = () => call("mb_back");
     el("fwd").onclick = () => call("mb_forward");
     el("reload").onclick = () => call("mb_reload");
     el("newtab").onclick = () => call("mb_new_tab");
     el("devtools").onclick = () => call("mb_toggle_devtools");
+    el("profile").onclick = () => call("mb_toggle_profiles");
+
+    const createProfile = () => {
+      const v = el("profile-name").value.trim();
+      if (v) { call("mb_new_profile", v); call("mb_toggle_profiles"); }
+    };
+    el("profile-create").onclick = createProfile;
+    el("profile-name").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); createProfile(); }
+      if (e.key === "Escape") { e.preventDefault(); call("mb_toggle_profiles"); }
+    });
 
     const addr = el("addr");
     addr.addEventListener("focus", () => { editing = true; addr.select(); });
@@ -140,10 +169,18 @@
     });
   }
 
+  async function initProfile() {
+    try { currentProfile = (await call("mb_current_profile")) || ""; } catch (e) {}
+    const btn = el("profile");
+    btn.textContent = currentProfile ? currentProfile[0].toUpperCase() : "●";
+    btn.title = "Profile: " + (currentProfile || "?");
+  }
+
   function init() {
     if (!exposed()) { setTimeout(init, 30); return; }  // wait for the bridge
     wire();
     call("mb_ready");
+    initProfile();
   }
 
   if (document.readyState === "loading") {

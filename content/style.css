@@ -162,3 +162,54 @@ button.nav:active { background: rgba(128,128,128,.30); }
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- profiles panel ---- */
+#profiles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+#profiles[hidden] { display: none; }
+.panel-label { color: var(--fg-dim); flex: 0 0 auto; }
+#profile-chips {
+  display: flex;
+  gap: 6px;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#profile-chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  white-space: nowrap;
+}
+.chip.current { background: var(--accent); border-color: var(--accent); color: #fff; }
+#profile-name {
+  flex: 0 0 160px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+#profile-name:focus { border-color: var(--accent); }
+
+/* current-profile dot on the toolbar button */
+#profile { font-size: 11px; font-weight: 700; }

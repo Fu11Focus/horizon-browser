@@ -68,7 +68,17 @@ self-contained — no external asset files at runtime.
 - [x] Favicons in the tab strip (resolved from the page DOM; works on local sites too)
 - [x] Brave-style top row: tabs beside the native window controls
 - [x] In-page search (⌘F): highlight, match counter, next/prev
+- [x] Profiles: isolated storage per profile, one window per profile
 - [ ] Windows / Linux build verification
+
+## Profiles
+
+Each profile is an isolated browsing context (cookies, storage, sessions) kept
+in its own directory under the app-data folder
+(`~/Library/Application Support/minibrowser/profiles/<name>/` on macOS). One
+window runs one profile; the profiles panel (profile button in the toolbar)
+lists profiles, switches to one (opens its window), and creates new ones. The
+last-used profile is reopened on launch.
 
 ## Keyboard shortcuts
 
