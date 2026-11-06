@@ -7,6 +7,12 @@
 Tiny, fast, cross-platform browser for web development, built in C++ on each OS's
 **native webview** — no bundled Chromium.
 
+<br>
+
+<img src="assets/screenshot.png" alt="Horizon — tabs beside the native window controls, dark theme" width="840">
+
+<br><br>
+
 ![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C)
 ![Engine](https://img.shields.io/badge/engine-system%20webview-blue)
 ![Bundle](https://img.shields.io/badge/bundle-~2%20MB-success)
