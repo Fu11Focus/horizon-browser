@@ -153,8 +153,117 @@ namespace mb
     // saucer installs its own WKUIDelegate (for JS alert/confirm), but it does
     // not implement createWebViewWithConfiguration:, so WebKit silently drops
     // requests to open a link in a new window. We slot a proxy delegate in
-    // front that handles that one method — opening the URL as a new tab — and
-    // forwards every other call to saucer's original delegate untouched.
+    // front that handles that one method and forwards every other call to
+    // saucer's original delegate untouched.
+    //
+    // Two cases, handled differently:
+    //   * A link click that wants a new window (target="_blank", Cmd-click) has
+    //     no opener dependency, so we open it as a new tab in our UI.
+    //   * JS window.open() (OAuth sign-in popups, etc.) MUST keep window.opener /
+    //     postMessage working, or the flow hangs with a blank popup. We give it a
+    //     real child window backed by a WKWebView built from WebKit's own
+    //     `configuration` — that preserves the opener relationship. Our tab
+    //     webviews are independent smartviews and cannot.
+    // Build a real child window for a JS-opened popup (defined below).
+    static WKWebView *make_popup(WKWebViewConfiguration *configuration, WKWindowFeatures *features,
+                                 WKWebView *opener);
+} // namespace mb
+
+// Owns a popup window spawned by window.open(). Closes the window when the page
+// calls window.close() (how OAuth popups dismiss themselves) and breaks the
+// retain cycle when the user closes it by hand.
+@interface MBPopupDelegate : NSObject <WKUIDelegate, NSWindowDelegate>
+@end
+
+@implementation MBPopupDelegate {
+  @public
+    NSWindow *_window; // the popup window we own (retained)
+}
+
+- (void)dealloc
+{
+    [_window release];
+    [super dealloc];
+}
+
+- (void)webViewDidClose:(WKWebView *)webView // window.close() from the page
+{
+    [_window close];
+}
+
+- (void)windowWillClose:(NSNotification *)notification
+{
+    // Cycle is window -> contentView(webview) -> associated delegate -> _window.
+    // Dropping the content view breaks it so everything can deallocate once
+    // WebKit releases the popup web view.
+    _window.contentView = nil;
+}
+
+// A nested window.open() inside the popup (OAuth flows sometimes chain through a
+// relay window) gets its own real child window too, so its opener relationship
+// and postMessage path stay intact.
+- (WKWebView *)webView:(WKWebView *)webView
+    createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
+               forNavigationAction:(WKNavigationAction *)navigationAction
+                    windowFeatures:(WKWindowFeatures *)windowFeatures
+{
+    return mb::make_popup(configuration, windowFeatures, webView);
+}
+@end
+
+namespace mb
+{
+    // Build a real child window for a JS-opened popup, backed by a WKWebView that
+    // uses WebKit's supplied `configuration` (so window.opener / postMessage keep
+    // working). WebKit loads the pending navigation into the returned web view.
+    static WKWebView *make_popup(WKWebViewConfiguration *configuration, WKWindowFeatures *features,
+                                 WKWebView *opener)
+    {
+        const CGFloat w = features.width ? features.width.doubleValue : 500;
+        const CGFloat h = features.height ? features.height.doubleValue : 600;
+        const NSRect frame = NSMakeRect(0, 0, w, h);
+
+        // Share the opener's cookie/storage session. Each tab has its own isolated
+        // data store (per-profile storage_path); WebKit would otherwise hand the
+        // popup a different store, so any CSRF/state cookie the site set before
+        // opening the popup would be missing at the OAuth callback — which the site
+        // rejects as an invalid authorization code.
+        if (opener.configuration.websiteDataStore)
+        {
+            configuration.websiteDataStore = opener.configuration.websiteDataStore;
+        }
+
+        // Allow Web Inspector on the popup so sign-in failures can be diagnosed
+        // (right-click -> Inspect Element).
+        [configuration.preferences setValue:@YES forKey:@"developerExtrasEnabled"];
+
+        WKWebView *popup      = [[WKWebView alloc] initWithFrame:frame configuration:configuration];
+        popup.customUserAgent = opener.customUserAgent; // match opener so sites don't sniff us as outdated
+
+        NSWindow *window = [[NSWindow alloc]
+            initWithContentRect:frame
+                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable)
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
+        window.releasedWhenClosed = NO; // we manage its lifetime via the delegate
+        window.contentView        = popup;
+        [window center];
+
+        MBPopupDelegate *delegate = [[MBPopupDelegate alloc] init];
+        delegate->_window         = [window retain];
+        window.delegate           = delegate; // weak
+        popup.UIDelegate          = delegate;
+
+        static const char kPopupKey = 0; // pin the delegate to the popup web view
+        objc_setAssociatedObject(popup, &kPopupKey, delegate, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [delegate release];
+
+        [window makeKeyAndOrderFront:nil];
+
+        [popup release];  // retained by the window (contentView) and by WebKit's return
+        [window release]; // retained by delegate->_window
+        return popup;
+    }
 } // namespace mb
 
 @interface MBNewWindowDelegate : NSObject <WKUIDelegate>
@@ -177,12 +286,20 @@ namespace mb
                forNavigationAction:(WKNavigationAction *)navigationAction
                     windowFeatures:(WKWindowFeatures *)windowFeatures
 {
-    NSURL *url = navigationAction.request.URL;
-    if (url.absoluteString.length && _open)
+    // A link click (target="_blank", Cmd-click) becomes a tab: no opener needed.
+    if (navigationAction.navigationType == WKNavigationTypeLinkActivated)
     {
-        _open(std::string(url.absoluteString.UTF8String));
+        NSURL *url = navigationAction.request.URL;
+        if (url.absoluteString.length && _open)
+        {
+            _open(std::string(url.absoluteString.UTF8String));
+        }
+        return nil; // handled as a tab; don't let WebKit make a detached web view
     }
-    return nil; // handled ourselves; don't let WebKit make a detached web view
+
+    // JS window.open() (OAuth sign-in, etc.): give it a real popup window that
+    // keeps window.opener / postMessage intact, built from WebKit's config.
+    return mb::make_popup(configuration, windowFeatures, webView);
 }
 
 // Transparently defer anything we don't implement (alert/confirm/prompt, file
