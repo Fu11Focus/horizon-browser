@@ -500,6 +500,38 @@ namespace
         return std::string{s.substr(b, e - b + 1)};
     }
 
+    // ---- session restore: the tabs a profile had open, persisted to disk ----
+
+    struct SessionState
+    {
+        std::vector<std::string> urls; // open tab URLs, in order
+        int active = 0;                // index into urls of the active tab
+    };
+
+    SessionState load_session(const std::string &profile)
+    {
+        SessionState s;
+        std::ifstream f(profile_dir(profile) / "session.txt");
+        if (!f)
+        {
+            return s;
+        }
+        std::string line;
+        if (std::getline(f, line)) // first line: active index
+        {
+            s.active = std::atoi(line.c_str());
+        }
+        while (std::getline(f, line)) // remaining lines: one URL each
+        {
+            line = trim(line);
+            if (!line.empty())
+            {
+                s.urls.push_back(line);
+            }
+        }
+        return s;
+    }
+
     // Turn free-form address-bar input into a real URL: pass-through when it
     // already has a scheme, prepend https:// for bare hosts, otherwise treat it
     // as a web search.
@@ -547,7 +579,8 @@ namespace
     };
 
     struct Browser;
-    Browser *open_window(saucer::application *app, std::string profile, bool incognito = false); // defined below
+    Browser *open_window(saucer::application *app, std::string profile, bool incognito = false,
+                         bool restore = false); // defined below
 
     struct Browser
     {
@@ -567,6 +600,8 @@ namespace
         bool find_open     = false; // in-page search bar visible (adds kFindHeight to chrome)
         bool profiles_open = false; // profiles panel visible (adds kProfilesHeight)
         bool password_open = false; // save-password banner visible (adds kPasswordHeight)
+        bool restoring        = false; // mid session-restore: suppress interim saves
+        bool restore_on_ready = false; // restore last session when the shell is ready
 
         Tab *find(int id)
         {
@@ -661,7 +696,10 @@ namespace
 
             view->on<saucer::webview::event::navigated>(
                 [this, id](const saucer::url &u)
-                { shell->execute("window.mbUpdateTab({}, {{url: {}}})", id, u.string()); });
+                {
+                    shell->execute("window.mbUpdateTab({}, {{url: {}}})", id, u.string());
+                    save_session();
+                });
 
             view->on<saucer::webview::event::load>(
                 [this, id](const saucer::state &st)
@@ -736,6 +774,7 @@ namespace
 
             if (tabs.empty())
             {
+                save_session();    // nothing left; persist the empty state
                 new_tab("", true); // never leave the window empty
                 return;
             }
@@ -748,6 +787,7 @@ namespace
             }
 
             layout();
+            save_session();
         }
 
         void reopen_tab() // ⇧⌘T: reopen the most recently closed tab
@@ -771,6 +811,7 @@ namespace
             active = id;
             layout();
             shell->execute("window.mbSetActive({})", id);
+            save_session();
         }
 
         // ---- in-page search ----
@@ -982,6 +1023,61 @@ namespace
                 }
             }
             tabs = std::move(out);
+            save_session();
+        }
+
+        // ---- session restore: persist this window's tabs per profile ----
+
+        void save_session()
+        {
+            if (incognito || restoring)
+            {
+                return;
+            }
+            std::vector<std::string> urls;
+            int active_idx = 0;
+            for (auto &t : tabs)
+            {
+                const std::string u = t.view->url().string();
+                if (u.empty())
+                {
+                    continue; // blank new tab — nothing worth restoring
+                }
+                if (t.id == active)
+                {
+                    active_idx = static_cast<int>(urls.size());
+                }
+                urls.push_back(u);
+            }
+            std::ofstream f(profile_dir(profile) / "session.txt", std::ios::trunc);
+            f << active_idx << "\n";
+            for (const auto &u : urls)
+            {
+                f << u << "\n";
+            }
+        }
+
+        // Reopen the tabs saved from this profile's last session. Returns false if
+        // there is nothing to restore (the caller then opens a blank tab instead).
+        bool restore_session()
+        {
+            const auto st = load_session(profile);
+            if (st.urls.empty())
+            {
+                return false;
+            }
+            restoring = true; // suppress interim saves; async navigations persist later
+            for (const auto &u : st.urls)
+            {
+                new_tab(u);
+            }
+            const int idx = (st.active >= 0 && st.active < static_cast<int>(tabs.size())) ? st.active : 0;
+            if (!tabs.empty())
+            {
+                switch_tab(tabs[idx].id);
+            }
+            restoring = false;
+            return true;
         }
 
         // Install keyboard-shortcut capture + routing on a webview (shell or tab).
@@ -1024,13 +1120,14 @@ namespace
     // child processes on exit anyway.
     std::vector<std::unique_ptr<Browser>> &g_browsers = *new std::vector<std::unique_ptr<Browser>>();
 
-    Browser *open_window(saucer::application *app, std::string profile, bool incognito)
+    Browser *open_window(saucer::application *app, std::string profile, bool incognito, bool restore)
     {
         auto owned = std::make_unique<Browser>();
         auto *b    = owned.get();
 
-        b->app       = app;
-        b->incognito = incognito;
+        b->app             = app;
+        b->incognito       = incognito;
+        b->restore_on_ready = restore && !incognito;
         b->profile   = incognito ? "Incognito" : profile;
         // Each window's tabs share one storage label; incognito uses a unique
         // ephemeral one (isolated session), profiles use their on-disk dir.
@@ -1087,7 +1184,19 @@ namespace
             });
 
         // Bridge: shell UI -> C++ core.
-        b->shell->expose("mb_ready", [b] { if (b->tabs.empty()) b->new_tab("", true); });
+        b->shell->expose("mb_ready",
+                         [b]
+                         {
+                             if (!b->tabs.empty())
+                             {
+                                 return;
+                             }
+                             if (b->restore_on_ready && b->restore_session())
+                             {
+                                 return;
+                             }
+                             b->new_tab("", true);
+                         });
         b->shell->expose("mb_navigate", [b](std::string u) { b->navigate(u); });
         b->shell->expose("mb_new_tab", [b] { b->new_tab("", true); });
         b->shell->expose("mb_close_tab", [b](int id) { b->close_tab(id); });
@@ -1152,7 +1261,7 @@ namespace
 coco::stray start(saucer::application *app)
 {
     list_profiles(); // ensure a Default profile exists
-    open_window(app, last_profile());
+    open_window(app, last_profile(), /*incognito=*/false, /*restore=*/true);
 
     co_await app->finish();
 }
