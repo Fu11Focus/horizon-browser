@@ -993,7 +993,7 @@ namespace
 
         void on_key(const std::string &k)
         {
-            if (k == "new_tab")          new_tab();
+            if (k == "new_tab")          new_tab("", true); // focus the address bar, like the "+" button
             else if (k == "reopen_tab")  reopen_tab();
             else if (k == "close_tab")   { if (active != -1) close_tab(active); }
             else if (k == "reload")      reload();
