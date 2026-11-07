@@ -226,6 +226,13 @@ namespace
         return label;
     }
 
+    // User-Agent for content tabs. The WebKit backend's default UA omits a
+    // Version/Safari token, so sites that sniff it (e.g. ukr.net) mistake us for
+    // an ancient browser and serve a degraded page. Advertise a current Safari.
+    constexpr std::string_view kUserAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+        "(KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+
     // Height of the chrome strip (tab row + toolbar). Must match content/style.css.
     constexpr int kChromeHeight = 84;
 
@@ -663,9 +670,10 @@ namespace
             Tab tab;
             tab.id   = next_id++;
             tab.view = std::make_unique<saucer::smartview>(
-                saucer::smartview::create({.window            = window,
+                saucer::smartview::create({.window             = window,
                                            .persistent_cookies = !incognito,
-                                           .storage_path       = fs::path{session_label}})
+                                           .storage_path       = fs::path{session_label},
+                                           .user_agent         = std::string{kUserAgent}})
                     .value());
 
             const int id = tab.id;
