@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <random>
@@ -39,6 +40,7 @@ namespace mb
     void focus_webview(saucer::webview *);      // src/platform_mac.mm
     void wipe_webview_data(saucer::webview *);  // src/platform_mac.mm
     void wake_and_quit(saucer::application *);   // src/platform_mac.mm
+    void install_new_window_handler(saucer::webview *, std::function<void(std::string)>); // src/platform_mac.mm
     bool keychain_store(const std::string &service, const std::string &account, const std::string &data);
     std::optional<std::string> keychain_load(const std::string &service, const std::string &account);
 }
@@ -667,6 +669,26 @@ namespace
                     const bool loading = st == saucer::state::started;
                     shell->execute("window.mbUpdateTab({}, {{loading: {}}})", id, loading);
                 });
+
+            // Open-in-new-window requests (target="_blank", window.open(),
+            // Cmd-click) should become new tabs. These reach us by two different
+            // paths in WebKit: a Cmd-click fires the navigate policy event with
+            // new_window set, while a plain target="_blank" bypasses that event
+            // entirely and only asks the UI delegate to create a web view — which
+            // WebKit silently drops when unhandled. Cover both.
+            view->on<saucer::webview::event::navigate>(
+                [this](const saucer::navigation &nav) -> saucer::policy
+                {
+                    if (nav.new_window())
+                    {
+                        new_tab(nav.url().string());
+                        return saucer::policy::block;
+                    }
+                    return saucer::policy::allow;
+                });
+#ifdef __APPLE__
+            mb::install_new_window_handler(view, [this](std::string u) { new_tab(std::move(u)); });
+#endif
 
             tabs.push_back(std::move(tab));
             active = id;

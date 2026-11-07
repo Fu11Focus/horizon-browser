@@ -8,7 +8,9 @@
 #include <saucer/modules/stable/webkit.hpp>
 
 #import <Security/Security.h>
+#import <objc/runtime.h>
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -143,6 +145,81 @@ namespace mb
                                                    data1:0
                                                    data2:0];
             [ns postEvent:event atStart:YES];
+        }
+    }
+
+    // --- New-window handling (target="_blank", window.open) -----------------
+    //
+    // saucer installs its own WKUIDelegate (for JS alert/confirm), but it does
+    // not implement createWebViewWithConfiguration:, so WebKit silently drops
+    // requests to open a link in a new window. We slot a proxy delegate in
+    // front that handles that one method — opening the URL as a new tab — and
+    // forwards every other call to saucer's original delegate untouched.
+} // namespace mb
+
+@interface MBNewWindowDelegate : NSObject <WKUIDelegate>
+@end
+
+@implementation MBNewWindowDelegate {
+  @public
+    id _inner;                               // saucer's original UIDelegate
+    std::function<void(std::string)> _open;  // opens a URL in a new tab
+}
+
+- (void)dealloc
+{
+    [_inner release];
+    [super dealloc];
+}
+
+- (WKWebView *)webView:(WKWebView *)webView
+    createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
+               forNavigationAction:(WKNavigationAction *)navigationAction
+                    windowFeatures:(WKWindowFeatures *)windowFeatures
+{
+    NSURL *url = navigationAction.request.URL;
+    if (url.absoluteString.length && _open)
+    {
+        _open(std::string(url.absoluteString.UTF8String));
+    }
+    return nil; // handled ourselves; don't let WebKit make a detached web view
+}
+
+// Transparently defer anything we don't implement (alert/confirm/prompt, file
+// pickers, …) to saucer's delegate so its behaviour is preserved.
+- (BOOL)respondsToSelector:(SEL)selector
+{
+    return [super respondsToSelector:selector] || [_inner respondsToSelector:selector];
+}
+
+- (id)forwardingTargetForSelector:(SEL)selector
+{
+    return [_inner respondsToSelector:selector] ? _inner : [super forwardingTargetForSelector:selector];
+}
+@end
+
+namespace mb
+{
+    void install_new_window_handler(saucer::webview *view, std::function<void(std::string)> open)
+    {
+        @autoreleasepool
+        {
+            WKWebView *wv = view->native<true>().webview;
+            if (!wv)
+            {
+                return;
+            }
+
+            MBNewWindowDelegate *proxy = [[MBNewWindowDelegate alloc] init];
+            proxy->_inner              = [wv.UIDelegate retain];
+            proxy->_open               = std::move(open);
+
+            // WKWebView.UIDelegate is a weak reference, so pin the proxy's
+            // lifetime to the web view via an associated object.
+            static const char kKey = 0;
+            objc_setAssociatedObject(wv, &kKey, proxy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            wv.UIDelegate = proxy;
+            [proxy release];
         }
     }
 
