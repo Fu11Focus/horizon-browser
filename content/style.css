@@ -148,8 +148,40 @@ html, body {
 .tab.active .close, .tab:hover .close { visibility: visible; }
 .tab .close:hover { background: var(--press); color: var(--fg); }
 
+/* pinned tabs: compact, favicon-only, kept at the front of the strip */
+.tab.pinned {
+  flex: 0 0 auto;
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
 #tabs #newtab { width: 30px; height: 30px; color: var(--fg-dim); }
 #tabs #newtab:hover { color: var(--fg); }
+
+/* ---- tab context menu ---- */
+#ctx {
+  position: fixed;
+  z-index: 1000;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--bar);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(20, 22, 27, .18);
+}
+.ctx-item {
+  padding: 6px 10px;
+  border-radius: 5px;
+  color: var(--fg);
+  white-space: nowrap;
+  cursor: default;
+}
+.ctx-item:hover { background: var(--hover); }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger:hover { background: var(--danger); color: #fff; }
 
 /* ---- toolbar ---- */
 #toolbar {
@@ -313,6 +345,55 @@ button.nav:active { background: var(--press); }
 .chip:not(.current):hover { background: var(--press); }
 .chip .avatar { width: 20px; height: 20px; font-size: 10px; }
 .chip.current { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
+.chip-name { white-space: nowrap; }
+
+/* per-chip edit affordance: a "⋯" button revealed on hover */
+.chip-more {
+  flex: 0 0 auto;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 20px;
+  margin: 0 -4px 0 2px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: default;
+}
+.chip:hover .chip-more { display: flex; }
+.chip-more:hover { background: var(--press); color: var(--fg); }
+
+/* inline rename / delete-confirm states */
+.chip.editing, .chip.confirm { background: var(--field); }
+.chip.error { background: var(--danger); color: #fff; }
+.chip-input {
+  width: 110px; height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: var(--bar);
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.chip-btn {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--press);
+  color: var(--fg);
+  font: inherit;
+  cursor: default;
+}
+.chip-btn:hover { background: var(--hover); }
+.chip-btn.danger { background: var(--danger); color: #fff; }
+.chip-btn.danger:hover { filter: brightness(1.06); background: var(--danger); }
 #profile-new {
   flex: 0 0 180px;
   display: flex;

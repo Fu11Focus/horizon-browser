@@ -87,6 +87,43 @@ namespace mb
         return result;
     }
 
+    // Migrate every saved password from one profile's service name to another
+    // (used when a profile is renamed). Updates the service attribute of all
+    // matching generic-password items in one call.
+    void keychain_rename_service(const std::string &from, const std::string &to)
+    {
+        run_on_main(^{
+          @autoreleasepool
+          {
+              NSDictionary *query = @{
+                  (id)kSecClass : (id)kSecClassGenericPassword,
+                  (id)kSecAttrService : nsstr(from),
+              };
+              NSDictionary *attrs = @{(id)kSecAttrService : nsstr(to)};
+              SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attrs);
+          }
+        });
+    }
+
+    // Delete every saved password under a profile's service name (used when a
+    // profile is deleted). errSecItemNotFound (nothing stored) counts as success.
+    bool keychain_delete_service(const std::string &service)
+    {
+        __block bool ok = false;
+        run_on_main(^{
+          @autoreleasepool
+          {
+              NSDictionary *query = @{
+                  (id)kSecClass : (id)kSecClassGenericPassword,
+                  (id)kSecAttrService : nsstr(service),
+              };
+              const OSStatus rc = SecItemDelete((__bridge CFDictionaryRef)query);
+              ok                 = rc == errSecSuccess || rc == errSecItemNotFound;
+          }
+        });
+        return ok;
+    }
+
     void configure_titlebar(saucer::window *window)
     {
         @autoreleasepool

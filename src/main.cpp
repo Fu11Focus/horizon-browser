@@ -43,6 +43,8 @@ namespace mb
     void install_new_window_handler(saucer::webview *, std::function<void(std::string)>); // src/platform_mac.mm
     bool keychain_store(const std::string &service, const std::string &account, const std::string &data);
     std::optional<std::string> keychain_load(const std::string &service, const std::string &account);
+    void keychain_rename_service(const std::string &from, const std::string &to); // migrate a profile's secrets
+    bool keychain_delete_service(const std::string &service);                      // drop a profile's secrets
 }
 #endif
 
@@ -136,6 +138,83 @@ namespace
     {
         std::ofstream f(app_data_dir() / "last_profile", std::ios::trunc);
         f << name;
+    }
+
+    // Case-insensitive compare (the macOS filesystem is case-insensitive, so two
+    // profile names differing only in case would collide on disk).
+    bool iequals(std::string_view a, std::string_view b)
+    {
+        if (a.size() != b.size())
+        {
+            return false;
+        }
+        for (std::size_t i = 0; i < a.size(); ++i)
+        {
+            if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Rename a profile's on-disk data directory and migrate its saved passwords.
+    // Caller has already validated `to` (sanitized, non-colliding) and ensured the
+    // profile is not open in any window. Returns false if the move fails.
+    bool rename_profile_data(const std::string &from, const std::string &to)
+    {
+        std::error_code ec;
+        const auto src = profiles_root() / from;
+        const auto dst = profiles_root() / to;
+        if (!fs::exists(src, ec))
+        {
+            return false;
+        }
+        // Block only a collision with a *different* profile; a case-only change
+        // (same dir on a case-insensitive FS) is allowed to fall through to rename.
+        if (fs::exists(dst, ec) && !iequals(from, to))
+        {
+            return false;
+        }
+        fs::rename(src, dst, ec);
+        if (ec)
+        {
+            return false;
+        }
+#ifdef __APPLE__
+        mb::keychain_rename_service("Horizon:" + from, "Horizon:" + to);
+#endif
+        if (last_profile() == from)
+        {
+            set_last_profile(to);
+        }
+        return true;
+    }
+
+    // Delete a profile's data directory and its saved passwords. Caller has
+    // ensured the profile is not open and is not the only one left.
+    bool delete_profile_data(const std::string &name)
+    {
+        std::error_code ec;
+        const auto dir = profiles_root() / name;
+        if (!fs::exists(dir, ec))
+        {
+            return false;
+        }
+        fs::remove_all(dir, ec);
+        if (ec)
+        {
+            return false;
+        }
+#ifdef __APPLE__
+        mb::keychain_delete_service("Horizon:" + name);
+#endif
+        if (last_profile() == name)
+        {
+            const auto remaining = list_profiles(); // recreates "Default" if none remain
+            set_last_profile(remaining.empty() ? "Default" : remaining.front());
+        }
+        return true;
     }
 
     // ---- saved passwords: secrets go to the OS keychain, never to disk/logs ----
@@ -511,8 +590,9 @@ namespace
 
     struct SessionState
     {
-        std::vector<std::string> urls; // open tab URLs, in order
-        int active = 0;                // index into urls of the active tab
+        std::vector<std::string> urls;   // open tab URLs, in order
+        std::vector<bool> pinned;        // parallel to urls: was each tab pinned?
+        int active = 0;                  // index into urls of the active tab
     };
 
     SessionState load_session(const std::string &profile)
@@ -528,12 +608,19 @@ namespace
         {
             s.active = std::atoi(line.c_str());
         }
-        while (std::getline(f, line)) // remaining lines: one URL each
+        while (std::getline(f, line)) // remaining lines: "<0|1>\t<url>", or a bare url (old format)
         {
+            bool pinned = false;
+            if (line.size() > 2 && line[1] == '\t' && (line[0] == '0' || line[0] == '1'))
+            {
+                pinned = line[0] == '1';
+                line.erase(0, 2);
+            }
             line = trim(line);
             if (!line.empty())
             {
                 s.urls.push_back(line);
+                s.pinned.push_back(pinned);
             }
         }
         return s;
@@ -582,6 +669,7 @@ namespace
     struct Tab
     {
         int id;
+        bool pinned = false; // pinned tabs are compact and kept at the front of the strip
         std::unique_ptr<saucer::smartview> view;
     };
 
@@ -1031,6 +1119,38 @@ namespace
                 }
             }
             tabs = std::move(out);
+            // Enforce the invariant that pinned tabs stay at the front (the shell
+            // keeps them there too, so this is just a safety net).
+            std::stable_partition(tabs.begin(), tabs.end(), [](const Tab &t) { return t.pinned; });
+            save_session();
+        }
+
+        // Tell the shell the current tab order (ids), so it can resync its strip
+        // after the core reorders tabs (e.g. on pin/unpin or session restore).
+        void notify_order()
+        {
+            std::vector<int> ids;
+            ids.reserve(tabs.size());
+            for (auto &t : tabs)
+            {
+                ids.push_back(t.id);
+            }
+            shell->execute("window.mbReorder({})", ids);
+        }
+
+        void set_pinned(int id, bool pinned)
+        {
+            auto *t = find(id);
+            if (!t || t->pinned == pinned)
+            {
+                return;
+            }
+            t->pinned = pinned;
+            // Pinned tabs move to the front; unpinned fall back behind them. A
+            // stable partition keeps the relative order within each group.
+            std::stable_partition(tabs.begin(), tabs.end(), [](const Tab &x) { return x.pinned; });
+            shell->execute("window.mbUpdateTab({}, {{pinned: {}}})", id, pinned);
+            notify_order();
             save_session();
         }
 
@@ -1043,6 +1163,7 @@ namespace
                 return;
             }
             std::vector<std::string> urls;
+            std::vector<bool> pins;
             int active_idx = 0;
             for (auto &t : tabs)
             {
@@ -1056,12 +1177,13 @@ namespace
                     active_idx = static_cast<int>(urls.size());
                 }
                 urls.push_back(u);
+                pins.push_back(t.pinned);
             }
             std::ofstream f(profile_dir(profile) / "session.txt", std::ios::trunc);
             f << active_idx << "\n";
-            for (const auto &u : urls)
+            for (std::size_t i = 0; i < urls.size(); ++i)
             {
-                f << u << "\n";
+                f << (pins[i] ? '1' : '0') << '\t' << urls[i] << "\n";
             }
         }
 
@@ -1075,10 +1197,27 @@ namespace
                 return false;
             }
             restoring = true; // suppress interim saves; async navigations persist later
-            for (const auto &u : st.urls)
+            for (std::size_t i = 0; i < st.urls.size(); ++i)
             {
-                new_tab(u);
+                const int id = new_tab(st.urls[i]);
+                if (st.pinned[i])
+                {
+                    if (auto *t = find(id))
+                    {
+                        t->pinned = true;
+                    }
+                }
             }
+            // Pinned tabs first, then push the pin flags + order to the shell.
+            std::stable_partition(tabs.begin(), tabs.end(), [](const Tab &t) { return t.pinned; });
+            for (auto &t : tabs)
+            {
+                if (t.pinned)
+                {
+                    shell->execute("window.mbUpdateTab({}, {{pinned: {}}})", t.id, true);
+                }
+            }
+            notify_order();
             const int idx = (st.active >= 0 && st.active < static_cast<int>(tabs.size())) ? st.active : 0;
             if (!tabs.empty())
             {
@@ -1127,6 +1266,21 @@ namespace
     // container avoids that; the OS reclaims the memory and kills the WebKit
     // child processes on exit anyway.
     std::vector<std::unique_ptr<Browser>> &g_browsers = *new std::vector<std::unique_ptr<Browser>>();
+
+    // Is a (non-incognito) profile currently open in some window? Renaming or
+    // deleting a profile whose data store is live would corrupt it, so the UI
+    // forbids it while open.
+    bool profile_is_open(const std::string &name)
+    {
+        for (const auto &p : g_browsers)
+        {
+            if (p && !p->incognito && p->profile == name)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 
     Browser *open_window(saucer::application *app, std::string profile, bool incognito, bool restore)
     {
@@ -1210,6 +1364,7 @@ namespace
         b->shell->expose("mb_close_tab", [b](int id) { b->close_tab(id); });
         b->shell->expose("mb_switch_tab", [b](int id) { b->switch_tab(id); });
         b->shell->expose("mb_reorder_tabs", [b](std::vector<int> ids) { b->reorder_tabs(ids); });
+        b->shell->expose("mb_set_pinned", [b](int id, bool pinned) { b->set_pinned(id, pinned); });
         b->shell->expose("mb_back", [b] { b->back(); });
         b->shell->expose("mb_forward", [b] { b->forward(); });
         b->shell->expose("mb_reload", [b] { b->reload(); });
@@ -1249,6 +1404,48 @@ namespace
                                  profile_dir(clean);
                                  open_window(app, clean);
                              }
+                         });
+
+        // Rename / delete a profile. Both return "" on success or a short,
+        // user-facing error string that the shell shows inline on the chip.
+        b->shell->expose("mb_rename_profile",
+                         [](std::string from, std::string to) -> std::string
+                         {
+                             const auto clean = sanitize_profile(to);
+                             if (clean.empty())
+                             {
+                                 return "Enter a valid name";
+                             }
+                             if (clean == from)
+                             {
+                                 return ""; // no-op
+                             }
+                             if (profile_is_open(from))
+                             {
+                                 return "Close its window first";
+                             }
+                             const auto all = list_profiles();
+                             for (const auto &n : all) // reject collision with a *different* profile
+                             {
+                                 if (iequals(n, clean) && !iequals(n, from))
+                                 {
+                                     return "That name is taken";
+                                 }
+                             }
+                             return rename_profile_data(from, clean) ? std::string{} : std::string{"Couldn't rename"};
+                         });
+        b->shell->expose("mb_delete_profile",
+                         [](std::string name) -> std::string
+                         {
+                             if (profile_is_open(name))
+                             {
+                                 return "Close its window first";
+                             }
+                             if (list_profiles().size() <= 1)
+                             {
+                                 return "Can't delete the only profile";
+                             }
+                             return delete_profile_data(name) ? std::string{} : std::string{"Couldn't delete"};
                          });
 
         b->shell->embed(saucer::embedded::all());
