@@ -266,6 +266,18 @@ namespace mb
     }
 } // namespace mb
 
+// Private WebKit SPI carrying the hit-test result for a context-menu request.
+// `absoluteLinkURL` is the URL of the link under the cursor, or nil if the
+// right-click wasn't on a link. We only message instances WebKit hands us, so
+// declaring the known properties is enough — no link-time dependency.
+@interface _WKHitTestResult : NSObject
+@property (nonatomic, readonly, copy) NSURL *absoluteLinkURL;
+@end
+
+@interface _WKContextMenuElementInfo : NSObject
+@property (nonatomic, readonly) _WKHitTestResult *hitTestResult;
+@end
+
 @interface MBNewWindowDelegate : NSObject <WKUIDelegate>
 @end
 
@@ -300,6 +312,39 @@ namespace mb
     // JS window.open() (OAuth sign-in, etc.): give it a real popup window that
     // keeps window.opener / postMessage intact, built from WebKit's config.
     return mb::make_popup(configuration, windowFeatures, webView);
+}
+
+// Right-clicking a link: prepend "Open Link in New Tab" to the native context
+// menu. WebKit hands us the proposed menu plus a hit-test result via this
+// private WKUIDelegate method; we insert our item and return the menu through
+// the completion handler. Non-link clicks leave the menu untouched.
+- (void)_webView:(WKWebView *)webView
+    getContextMenuFromProposedMenu:(NSMenu *)menu
+                        forElement:(_WKContextMenuElementInfo *)element
+                          userInfo:(id<NSSecureCoding>)userInfo
+                 completionHandler:(void (^)(NSMenu *))completionHandler
+{
+    NSURL *link = element.hitTestResult.absoluteLinkURL;
+    if (link.absoluteString.length)
+    {
+        NSMenuItem *item = [[[NSMenuItem alloc] initWithTitle:@"Open Link in New Tab"
+                                                       action:@selector(mbOpenLinkInNewTab:)
+                                                keyEquivalent:@""] autorelease];
+        item.target           = self;
+        item.representedObject = link.absoluteString;
+        [menu insertItem:item atIndex:0];
+        [menu insertItem:[NSMenuItem separatorItem] atIndex:1];
+    }
+    completionHandler(menu);
+}
+
+- (void)mbOpenLinkInNewTab:(NSMenuItem *)sender
+{
+    NSString *url = sender.representedObject;
+    if (url.length && _open)
+    {
+        _open(std::string(url.UTF8String));
+    }
 }
 
 // Transparently defer anything we don't implement (alert/confirm/prompt, file
