@@ -277,6 +277,14 @@
     el("find-box").classList.toggle("nomatch", !!q.value && total === 0);
   };
 
+  // Zoom indicator: the C++ core pushes the active tab's level (percent). It
+  // shows only when the page is zoomed; clicking it resets to 100% (⌘0).
+  window.mbSetZoom = (pct) => {
+    const z = el("zoom");
+    z.textContent = pct + "%";
+    z.hidden = pct === 100;
+  };
+
   // ---- profiles ----
   async function buildChips() {
     const chips = el("profile-chips");
@@ -405,6 +413,7 @@
     el("back").onclick = () => call("mb_back");
     el("fwd").onclick = () => call("mb_forward");
     el("reload").onclick = () => call("mb_reload");
+    el("zoom").onclick = () => call("mb_zoom_reset");
     el("devtools").onclick = () => call("mb_toggle_devtools");
     el("profile").onclick = () => call("mb_toggle_profiles");
 

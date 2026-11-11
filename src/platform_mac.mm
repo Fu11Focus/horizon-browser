@@ -422,6 +422,34 @@ namespace mb
         }
     }
 
+    // Set a webview's page-zoom factor. Unlike CSS `zoom` (which scales visually
+    // but leaves the layout viewport at its original width, so responsive SPAs
+    // like Jira never reflow and get clipped), WebKit's page-zoom reflows the
+    // page exactly like Safari's ⌘+/−. `_setPageZoomFactor:` is WebKit SPI, fine
+    // for a self-shipped browser; it persists across navigations in the same view.
+    void set_page_zoom(saucer::webview *view, double factor)
+    {
+        @autoreleasepool
+        {
+            WKWebView *wv = view->native<true>().webview;
+            if (!wv)
+            {
+                return;
+            }
+            SEL sel = @selector(_setPageZoomFactor:);
+            if ([wv respondsToSelector:sel])
+            {
+                // Invoke the double-argument SPI without a declared prototype.
+                NSMethodSignature *sig = [wv methodSignatureForSelector:sel];
+                NSInvocation *inv      = [NSInvocation invocationWithMethodSignature:sig];
+                inv.target             = wv;
+                inv.selector           = sel;
+                [inv setArgument:&factor atIndex:2];
+                [inv invoke];
+            }
+        }
+    }
+
     // Wipe all website data (cookies, storage, caches) of a webview's data store.
     // Used to make incognito windows ephemeral: called for each tab on close.
     void wipe_webview_data(saucer::webview *view)

@@ -39,6 +39,7 @@ namespace mb
     void configure_titlebar(saucer::window *); // src/platform_mac.mm
     void focus_webview(saucer::webview *);      // src/platform_mac.mm
     void wipe_webview_data(saucer::webview *);  // src/platform_mac.mm
+    void set_page_zoom(saucer::webview *, double); // src/platform_mac.mm
     void wake_and_quit(saucer::application *);   // src/platform_mac.mm
     void install_new_window_handler(saucer::webview *, std::function<void(std::string)>); // src/platform_mac.mm
     bool keychain_store(const std::string &service, const std::string &account, const std::string &data);
@@ -289,6 +290,13 @@ namespace
 #endif
     }
 
+    void set_page_zoom([[maybe_unused]] saucer::webview *view, [[maybe_unused]] double factor)
+    {
+#ifdef __APPLE__
+        mb::set_page_zoom(view, factor);
+#endif
+    }
+
     // Unique, per-window storage label for an incognito window. Saucer hashes the
     // storage_path string into a data-store UUID, so a distinct label gives an
     // isolated session; a random component avoids colliding with a prior session.
@@ -351,6 +359,15 @@ namespace
           case "KeyF": e.preventDefault(); return send("find");
           case "KeyN": e.preventDefault(); return send(e.shiftKey ? "new_incognito" : "new_window");
           case "Tab": e.preventDefault(); return send(e.shiftKey ? "prev_tab" : "next_tab");
+          // Page zoom. On macOS the unshifted "+" key reports code "Equal"; also
+          // accept the numpad keys. Cmd+0 resets (Digit0 is a no-op for tab
+          // switching, which only uses 1-9).
+          case "Equal":
+          case "NumpadAdd":      e.preventDefault(); return send("zoom_in");
+          case "Minus":
+          case "NumpadSubtract": e.preventDefault(); return send("zoom_out");
+          case "Digit0":
+          case "Numpad0":        e.preventDefault(); return send("zoom_reset");
         }
         if (c && c.indexOf("Digit") === 0) {
           var n = parseInt(c.slice(5), 10);
@@ -669,7 +686,8 @@ namespace
     struct Tab
     {
         int id;
-        bool pinned = false; // pinned tabs are compact and kept at the front of the strip
+        bool pinned  = false; // pinned tabs are compact and kept at the front of the strip
+        double zoom  = 1.0;   // page zoom factor (Cmd +/-/0); re-applied on each navigation
         std::unique_ptr<saucer::smartview> view;
     };
 
@@ -708,6 +726,62 @@ namespace
                 }
             }
             return nullptr;
+        }
+
+        // Push a tab's zoom factor into its page. On macOS this uses WebKit's
+        // native page zoom, which reflows the layout like a real browser (CSS
+        // `zoom` only scales visually and leaves responsive pages clipped). The
+        // native factor persists across navigations; other backends fall back to
+        // CSS `zoom`, re-applied by the load handler on each page.
+        void apply_zoom(Tab &t)
+        {
+#ifdef __APPLE__
+            set_page_zoom(t.view.get(), t.zoom);
+#else
+            t.view->execute("document.documentElement.style.zoom = {}", t.zoom);
+#endif
+        }
+
+        // Tell the shell the active tab's zoom level (percent) so it can show /
+        // hide the zoom indicator. 100% hides it.
+        void report_zoom()
+        {
+            if (!shell)
+            {
+                return;
+            }
+            Tab *t        = find(active);
+            const int pct = static_cast<int>((t ? t->zoom : 1.0) * 100.0 + 0.5);
+            shell->execute("window.mbSetZoom({})", pct);
+        }
+
+        // Step the active tab's zoom. `dir` > 0 zooms in, < 0 out, 0 resets to 100%.
+        void change_zoom(int dir)
+        {
+            Tab *t = find(active);
+            if (!t)
+            {
+                return;
+            }
+
+            if (dir == 0)
+            {
+                t->zoom = 1.0;
+            }
+            else
+            {
+                // ~20% geometric steps, clamped to a sane range (Chrome-like).
+                const double factor = dir > 0 ? 1.2 : 1.0 / 1.2;
+                t->zoom             = std::clamp(t->zoom * factor, 0.25, 5.0);
+                // Snap near-100% back to exactly 1.0 so zoom clears cleanly.
+                if (t->zoom > 0.99 && t->zoom < 1.01)
+                {
+                    t->zoom = 1.0;
+                }
+            }
+
+            apply_zoom(*t);
+            report_zoom();
         }
 
         // Place a view using a top-left logical origin. saucer's WKWebView backend
@@ -802,6 +876,15 @@ namespace
                 {
                     const bool loading = st == saucer::state::started;
                     shell->execute("window.mbUpdateTab({}, {{loading: {}}})", id, loading);
+                    // CSS zoom lives on the document and is wiped by each new page,
+                    // so re-apply the tab's remembered factor once loading settles.
+                    if (!loading)
+                    {
+                        if (auto *t = find(id); t && t->zoom != 1.0)
+                        {
+                            apply_zoom(*t);
+                        }
+                    }
                 });
 
             // Open-in-new-window requests (target="_blank", window.open(),
@@ -835,6 +918,7 @@ namespace
 
             shell->execute("window.mbAddTab({}, {{url: {}, title: \"\"}})", id, url);
             shell->execute("window.mbSetActive({})", id);
+            report_zoom();
 
             if (focus_addr) // put the cursor in the address bar, ready to type
             {
@@ -880,6 +964,7 @@ namespace
                 const int ni = std::min(idx, static_cast<int>(tabs.size()) - 1);
                 active       = tabs[ni].id;
                 shell->execute("window.mbSetActive({})", active);
+                report_zoom();
             }
 
             layout();
@@ -907,6 +992,7 @@ namespace
             active = id;
             layout();
             shell->execute("window.mbSetActive({})", id);
+            report_zoom();
             save_session();
         }
 
@@ -1249,6 +1335,9 @@ namespace
             else if (k == "focus_addr")  { if (shell) { focus_webview(shell.get()); shell->execute("window.mbFocusAddr && window.mbFocusAddr()"); } }
             else if (k == "next_tab")    cycle_tab(1);
             else if (k == "prev_tab")    cycle_tab(-1);
+            else if (k == "zoom_in")     change_zoom(1);
+            else if (k == "zoom_out")    change_zoom(-1);
+            else if (k == "zoom_reset")  change_zoom(0);
             else if (k.rfind("tab:", 0) == 0) switch_to_index(std::atoi(k.c_str() + 4));
         }
     };
@@ -1368,6 +1457,7 @@ namespace
         b->shell->expose("mb_back", [b] { b->back(); });
         b->shell->expose("mb_forward", [b] { b->forward(); });
         b->shell->expose("mb_reload", [b] { b->reload(); });
+        b->shell->expose("mb_zoom_reset", [b] { b->change_zoom(0); });
         b->shell->expose("mb_toggle_devtools", [b] { b->toggle_devtools(); });
         b->shell->expose("mb_find", [b](std::string q) { b->find_query(std::move(q)); });
         b->shell->expose("mb_find_next", [b] { b->find_next(); });
